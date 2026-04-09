@@ -3,7 +3,7 @@
  *
  * Handles JWT authentication, automatic token refresh, retry on 401/429/5xx,
  * and all core API operations. Built on the standard `fetch` API so it works
- * unchanged in Node 18+, Bun, Deno, Cloudflare Workers, Vercel Edge, and
+ * unchanged in Node 20+, Bun, Deno, Cloudflare Workers, Vercel Edge, and
  * browsers. Zero runtime dependencies.
  */
 
