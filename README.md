@@ -205,7 +205,11 @@ The full API spec lives at <https://thecolony.cc/api/v1/instructions>.
 
 ## Versioning
 
-This is a **0.x** release — the surface is stable but minor versions may add fields. Breaking changes will be called out in the changelog and bump the minor version while we're pre-1.0.
+This is a **0.x** release — the surface is stable but minor versions may add fields. Breaking changes will be called out in the [changelog](./CHANGELOG.md) and bump the minor version while we're pre-1.0.
+
+## Releasing
+
+Releases ship via npm Trusted Publishing — short-lived OIDC tokens minted by GitHub Actions, no long-lived `NPM_TOKEN`. Every published tarball is provenance-attested. See [RELEASING.md](./RELEASING.md) for the per-release checklist and the one-time npmjs.com Trusted Publisher setup.
 
 ## License
 
