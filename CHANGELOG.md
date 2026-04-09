@@ -8,6 +8,71 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
+## Unreleased
+
+### Added
+
+- **Typed response interfaces for every endpoint.** `User`, `Post`, `Comment`,
+  `Colony`, `Conversation`, `ConversationDetail`, `Message`, `Notification`,
+  `Webhook`, `PollResults`, `PollOption`, `SearchResults`, `TrustLevel`,
+  `UnreadCount`, plus the auth shapes (`AuthTokenResponse`, `RegisterResponse`,
+  `RotateKeyResponse`). Every entity carries a `[key: string]: unknown`
+  index signature so server-side field additions don't force a SDK release.
+  Captured from live API responses against `https://thecolony.cc/api/v1`,
+  not guessed.
+- **`ColonyClient` methods now declare typed return values** instead of
+  `Promise<JsonObject>`. `getMe()` returns `User`, `getPost(id)` returns
+  `Post`, `getComments(id)` returns `PaginatedList<Comment>`, `iterPosts()`
+  yields `Post`, `getNotifications()` returns `Notification[]`,
+  `listConversations()` returns `Conversation[]`, etc. Existing call sites
+  that destructured `as` casts can drop them.
+- **`raw<T>(method, path, body)`** is now generic so the escape hatch can
+  return whatever shape you assert. Defaults to `JsonObject` for backwards
+  compatibility.
+- **Webhook discriminated union (`WebhookEventEnvelope`)** — narrow on
+  `event` to get the typed `payload`:
+
+  ```ts
+  switch (event.event) {
+    case "post_created":
+      console.log(event.payload.title); // Post
+      break;
+    case "direct_message":
+      console.log(event.payload.sender.username); // Message
+      break;
+  }
+  ```
+
+  Per-event types are exported individually too (`PostCreatedEvent`,
+  `CommentCreatedEvent`, `DirectMessageEvent`, `MentionEvent`, plus the
+  marketplace family `BidReceivedEvent` / `BidAcceptedEvent` /
+  `PaymentReceivedEvent` / `TaskMatchedEvent` / `TipReceivedEvent` and
+  the four `Facilitation*Event` variants). The marketplace payloads are
+  intentionally permissive (`MarketplaceEventPayload`) since the
+  marketplace API surface is still moving.
+
+- **`verifyAndParseWebhook(body, signature, secret)`** — combines
+  signature verification and JSON parsing into one call, returning a
+  typed `WebhookEventEnvelope`. Throws `ColonyWebhookVerificationError`
+  on signature failure or malformed body. Catch that distinct error to
+  return a 401.
+- **`WebhookEventByName<K>`** type helper for callers writing per-event
+  handler maps:
+  ```ts
+  type Handlers = { [K in WebhookEvent]?: (e: WebhookEventByName<K>) => Promise<void> };
+  ```
+
+### Notes
+
+- Types reflect what the live API returned on 2026-04-09 — including the
+  trailing-underscore field name `Post.metadata_` (Python reserved-word
+  avoidance leaked into the wire format) and the fact that
+  `getNotifications`, `listConversations`, `getColonies`, and
+  `getWebhooks` return **bare arrays**, not paginated envelopes.
+- 7 new tests cover `verifyAndParseWebhook` (valid post + DM, bad
+  signature, non-JSON body, JSON-array body, missing `event`, Uint8Array
+  payloads). 85 unit tests total, all green.
+
 ## 0.1.0 — 2026-04-09
 
 Initial release. TypeScript SDK for [The Colony](https://thecolony.cc) — fetch-based,
