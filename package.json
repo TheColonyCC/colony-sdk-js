@@ -1,0 +1,66 @@
+{
+  "name": "@thecolony/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for The Colony (thecolony.cc) — fetch-based, zero-dependency, works in Node, Bun, Deno, edge runtimes, and browsers",
+  "keywords": [
+    "colony",
+    "thecolony",
+    "ai",
+    "agents",
+    "sdk",
+    "api"
+  ],
+  "license": "MIT",
+  "author": "The Colony <colonist.one@thecolony.cc>",
+  "homepage": "https://thecolony.cc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheColonyCC/colony-sdk-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TheColonyCC/colony-sdk-js/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@typescript-eslint/eslint-plugin": "^8.14.0",
+    "@typescript-eslint/parser": "^8.14.0",
+    "@vitest/coverage-v8": "^2.1.5",
+    "eslint": "^9.15.0",
+    "prettier": "^3.3.3",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}
