@@ -14,10 +14,12 @@ import { retryConfig } from "../src/retry.js";
 
 import { MockFetch, withAuthToken } from "./_mockFetch.js";
 
-function makeClient(mock: MockFetch, overrides = {}) {
+function makeClient(mock: MockFetch, overrides: Record<string, unknown> = {}) {
   return new ColonyClient("col_test_key", {
     fetch: mock.fetch,
     retry: retryConfig({ maxRetries: 0, baseDelay: 0, maxDelay: 0 }),
+    // Disable global token cache in unit tests to prevent cross-test pollution.
+    tokenCache: false,
     ...overrides,
   });
 }
@@ -90,6 +92,108 @@ describe("auth", () => {
 
     // 2 token fetches + 2 getMe
     expect(mock.calls.filter((c) => c.url.endsWith("/auth/token"))).toHaveLength(2);
+  });
+});
+
+describe("token cache", () => {
+  it("two clients with the same key share one token via a custom cache", async () => {
+    const cache = new Map();
+    const mock = new MockFetch();
+    // Only one auth token response — the second client should reuse it.
+    withAuthToken(mock);
+    mock.json({ id: "u1" }); // client1 getMe
+    mock.json({ id: "u1" }); // client2 getMe
+
+    const client1 = new ColonyClient("col_shared", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+    const client2 = new ColonyClient("col_shared", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+
+    await client1.getMe();
+    await client2.getMe();
+
+    // Only 1 /auth/token call, not 2.
+    const tokenCalls = mock.calls.filter((c) => c.url.endsWith("/auth/token"));
+    expect(tokenCalls).toHaveLength(1);
+  });
+
+  it("clients with different keys each fetch their own token", async () => {
+    const cache = new Map();
+    const mock = new MockFetch();
+    withAuthToken(mock); // for key A
+    mock.json({ id: "u1" }); // client A getMe
+    mock.json({ access_token: "token-B" }); // for key B
+    mock.json({ id: "u2" }); // client B getMe
+
+    const clientA = new ColonyClient("col_key_a", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+    const clientB = new ColonyClient("col_key_b", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+
+    await clientA.getMe();
+    await clientB.getMe();
+
+    const tokenCalls = mock.calls.filter((c) => c.url.endsWith("/auth/token"));
+    expect(tokenCalls).toHaveLength(2);
+  });
+
+  it("refreshToken evicts the cached entry so siblings re-fetch", async () => {
+    const cache = new Map();
+    const mock = new MockFetch();
+    withAuthToken(mock); // client1 token
+    mock.json({ id: "u1" }); // client1 getMe
+    mock.json({ access_token: "token-2" }); // client2 re-fetch after eviction
+    mock.json({ id: "u1" }); // client2 getMe
+
+    const client1 = new ColonyClient("col_shared", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+    const client2 = new ColonyClient("col_shared", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+
+    await client1.getMe();
+    // Evict — simulates "token is stale"
+    client1.refreshToken();
+    // client2 should now re-fetch because the cache entry is gone.
+    await client2.getMe();
+
+    const tokenCalls = mock.calls.filter((c) => c.url.endsWith("/auth/token"));
+    expect(tokenCalls).toHaveLength(2);
+  });
+
+  it("tokenCache: false disables sharing entirely", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1" });
+    withAuthToken(mock);
+    mock.json({ id: "u1" });
+
+    const client1 = makeClient(mock); // tokenCache: false via makeClient
+    const client2 = makeClient(mock);
+
+    await client1.getMe();
+    await client2.getMe();
+
+    // Each fetched its own token — 2 calls.
+    const tokenCalls = mock.calls.filter((c) => c.url.endsWith("/auth/token"));
+    expect(tokenCalls).toHaveLength(2);
   });
 });
 

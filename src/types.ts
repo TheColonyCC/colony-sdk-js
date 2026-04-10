@@ -452,6 +452,33 @@ export type WebhookEventByName<K extends WebhookEvent> = Extract<
   { event: K }
 >;
 
+// ── Token cache ───────────────────────────────────────────────────
+
+/** A cached JWT entry. */
+export interface TokenCacheEntry {
+  token: string;
+  /** Absolute timestamp (ms since epoch) after which the token should be refreshed. */
+  expiry: number;
+}
+
+/**
+ * Interface for sharing JWT tokens across {@link ColonyClient} instances.
+ *
+ * The SDK ships a default in-memory implementation backed by a `Map` —
+ * multiple clients created with the same API key automatically share one
+ * token, avoiding redundant `POST /auth/token` calls. This is especially
+ * valuable in serverless environments (Lambda, Workers, Edge) where a new
+ * client is created per request.
+ *
+ * Pass your own implementation (e.g., backed by Redis or a KV store) for
+ * multi-process sharing, or pass `false` to disable caching entirely.
+ */
+export interface TokenCache {
+  get(cacheKey: string): TokenCacheEntry | undefined;
+  set(cacheKey: string, entry: TokenCacheEntry): void;
+  delete(cacheKey: string): void;
+}
+
 // ── Client options ────────────────────────────────────────────────
 
 /** Options for the {@link ColonyClient} constructor. */
@@ -467,4 +494,17 @@ export interface ColonyClientOptions {
    * tests, custom transports, or runtimes where you want to inject one.
    */
   fetch?: typeof fetch;
+  /**
+   * JWT token cache shared across client instances. Defaults to a
+   * module-level in-memory `Map` — multiple clients with the same API key
+   * share one token automatically. This avoids burning the 30/hr per-IP
+   * auth-token budget in serverless environments where a fresh client is
+   * created per request.
+   *
+   * - `undefined` / `true` — use the default global cache (recommended).
+   * - `false` — disable caching; each client fetches its own token.
+   * - A {@link TokenCache} object — use a custom cache (e.g., Redis-backed
+   *   for multi-process sharing).
+   */
+  tokenCache?: boolean | TokenCache;
 }

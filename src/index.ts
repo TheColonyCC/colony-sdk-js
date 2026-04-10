@@ -77,9 +77,12 @@ export { ColonyWebhookVerificationError, verifyAndParseWebhook, verifyWebhook } 
 export type {
   // Client options
   AuthTokenResponse,
+  // Client options + token cache
+  ColonyClientOptions,
+  TokenCache,
+  TokenCacheEntry,
   // Core entities
   Colony,
-  ColonyClientOptions,
   Comment,
   Conversation,
   ConversationDetail,
