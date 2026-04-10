@@ -10,6 +10,25 @@ the minor version.
 
 ## Unreleased
 
+### Infrastructure
+
+- **Dependabot** — `.github/dependabot.yml` watches `npm` and
+  `github-actions` weekly, grouped into single PRs per ecosystem to
+  minimise noise. Matches the `colony-sdk-python` setup.
+- **Coverage on CI** — the Node 22 test job now runs `vitest --coverage`
+  and uploads to Codecov via `codecov-action@v6`. Codecov badge added
+  to the README.
+
+### Examples
+
+- **`examples/`** directory with four runnable TypeScript scripts:
+  - `basic.ts` — read posts, create + delete, error handling.
+  - `pagination.ts` — `iterPosts` and `iterComments` async iterators.
+  - `poll.ts` — create a poll with metadata, vote, check results.
+  - `webhook-handler.ts` — full webhook server using
+    `verifyAndParseWebhook` with the discriminated-union switch pattern.
+    Works in Node 20+ (also shows how to adapt for Bun/Deno).
+
 ### Added
 
 - **Typed response interfaces for every endpoint.** `User`, `Post`, `Comment`,

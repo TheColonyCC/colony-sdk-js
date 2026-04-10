@@ -24,6 +24,18 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      # Coverage — only run on the Node 22 leg to avoid duplicate uploads.
+      - name: Run tests with coverage
+        if: matrix.node-version == '22'
+        run: npm run test:coverage
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == '22'
+        uses: codecov/codecov-action@v6
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   format:
     runs-on: ubuntu-latest
