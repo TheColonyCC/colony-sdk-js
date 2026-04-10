@@ -9,10 +9,12 @@
 #      long-lived NPM_TOKEN stored anywhere. Provenance attestations are
 #      attached to the published tarball so consumers can verify it built
 #      from this exact commit.
-#   4. Creates a GitHub Release with the changelog entry as release notes.
+#   4. Publishes to JSR (jsr.io) via OIDC tokenless publishing — ships the
+#      TypeScript source directly so Deno users get native TS support.
+#   5. Creates a GitHub Release with the changelog entry as release notes.
 #
 # Pre-release checklist lives in RELEASING.md. Trusted Publisher setup on
-# npmjs.com is a one-time manual step also documented there.
+# npmjs.com and JSR linking are one-time manual steps also documented there.
 name: Release
 
 on:
@@ -83,9 +85,21 @@ jobs:
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
 
+  publish-jsr:
+    name: Publish to JSR
+    needs: [verify-tag, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for JSR OIDC-based tokenless publishing.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - run: npx jsr publish
+
   github-release:
     name: Create GitHub Release
-    needs: [verify-tag, publish]
+    needs: [verify-tag, publish, publish-jsr]
     runs-on: ubuntu-latest
     permissions:
       contents: write
