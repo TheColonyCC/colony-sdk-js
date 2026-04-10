@@ -11,11 +11,30 @@ import { resolveColony } from "./colonies.js";
 import { ColonyAPIError, ColonyNetworkError, buildApiError } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
+  AuthTokenResponse,
+  Colony,
   ColonyClientOptions,
+  Comment,
+  Conversation,
+  ConversationDetail,
   JsonObject,
+  Message,
+  Notification,
+  PaginatedList,
+  PollResults,
+  PollVoteResponse,
+  Post,
   PostSort,
   PostType,
   ReactionEmoji,
+  ReactionResponse,
+  RegisterResponse,
+  RotateKeyResponse,
+  SearchResults,
+  UnreadCount,
+  User,
+  VoteResponse,
+  Webhook,
   WebhookEvent,
 } from "./types.js";
 
@@ -140,7 +159,7 @@ interface RequestOptions {
  * await client.createPost("Hello", "First post!", { colony: "general" });
  *
  * for await (const post of client.iterPosts({ maxResults: 100 })) {
- *   console.log(post["title"]);
+ *   console.log(post.title);
  * }
  * ```
  */
@@ -167,13 +186,13 @@ export class ColonyClient {
     if (this.token && Date.now() < this.tokenExpiry) {
       return;
     }
-    const data = await this.rawRequest({
+    const data = await this.rawRequest<AuthTokenResponse>({
       method: "POST",
       path: "/auth/token",
       body: { api_key: this.apiKey },
       auth: false,
     });
-    this.token = data["access_token"] as string;
+    this.token = data.access_token;
     // Refresh 1 hour before expiry (tokens last 24h)
     this.tokenExpiry = Date.now() + 23 * 3600 * 1000;
   }
@@ -190,10 +209,13 @@ export class ColonyClient {
    * The client's `apiKey` is automatically updated to the new key.
    * You should persist the new key — the old one will no longer work.
    */
-  async rotateKey(): Promise<JsonObject> {
-    const data = await this.rawRequest({ method: "POST", path: "/auth/rotate-key" });
-    if (typeof data["api_key"] === "string") {
-      this.apiKey = data["api_key"];
+  async rotateKey(): Promise<RotateKeyResponse> {
+    const data = await this.rawRequest<RotateKeyResponse>({
+      method: "POST",
+      path: "/auth/rotate-key",
+    });
+    if (typeof data.api_key === "string") {
+      this.apiKey = data.api_key;
       // Force token refresh since the old key is now invalid
       this.token = null;
       this.tokenExpiry = 0;
@@ -205,17 +227,18 @@ export class ColonyClient {
 
   /**
    * Public escape hatch for endpoints not yet wrapped in a typed method.
-   * Inherits auth, retry, and typed-error handling.
+   * Inherits auth, retry, and typed-error handling. Returns the raw decoded
+   * JSON — cast to whatever shape you expect.
    */
-  async raw(method: string, path: string, body?: JsonObject): Promise<JsonObject> {
-    return this.rawRequest({ method, path, body });
+  async raw<T = JsonObject>(method: string, path: string, body?: JsonObject): Promise<T> {
+    return this.rawRequest<T>({ method, path, body });
   }
 
-  private async rawRequest(
+  private async rawRequest<T>(
     opts: RequestOptions,
     attempt = 0,
     tokenRefreshed = false,
-  ): Promise<JsonObject> {
+  ): Promise<T> {
     const { method, path, body } = opts;
     const auth = opts.auth ?? true;
 
@@ -252,14 +275,11 @@ export class ColonyClient {
 
     if (response.ok) {
       const text = await response.text();
-      if (!text) return {};
+      if (!text) return {} as T;
       try {
-        const parsed = JSON.parse(text);
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as JsonObject)
-          : ({ data: parsed } as JsonObject);
+        return JSON.parse(text) as T;
       } catch {
-        return {};
+        return {} as T;
       }
     }
 
@@ -269,7 +289,7 @@ export class ColonyClient {
     if (response.status === 401 && !tokenRefreshed && auth) {
       this.token = null;
       this.tokenExpiry = 0;
-      return this.rawRequest(opts, attempt, true);
+      return this.rawRequest<T>(opts, attempt, true);
     }
 
     // Configurable retry on transient failures (429, 502, 503, 504 by default).
@@ -282,7 +302,7 @@ export class ColonyClient {
     if (shouldRetry(response.status, attempt, this.retry)) {
       const delay = computeRetryDelay(attempt, this.retry, retryAfterVal);
       await sleep(delay);
-      return this.rawRequest(opts, attempt + 1, tokenRefreshed);
+      return this.rawRequest<T>(opts, attempt + 1, tokenRefreshed);
     }
 
     throw buildApiError(
@@ -318,11 +338,7 @@ export class ColonyClient {
    * });
    * ```
    */
-  async createPost(
-    title: string,
-    body: string,
-    options: CreatePostOptions = {},
-  ): Promise<JsonObject> {
+  async createPost(title: string, body: string, options: CreatePostOptions = {}): Promise<Post> {
     const colonyId = resolveColony(options.colony ?? "general");
     const payload: JsonObject = {
       title,
@@ -334,16 +350,16 @@ export class ColonyClient {
     if (options.metadata !== undefined) {
       payload["metadata"] = options.metadata;
     }
-    return this.rawRequest({ method: "POST", path: "/posts", body: payload });
+    return this.rawRequest<Post>({ method: "POST", path: "/posts", body: payload });
   }
 
   /** Get a single post by ID. */
-  async getPost(postId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: `/posts/${postId}` });
+  async getPost(postId: string): Promise<Post> {
+    return this.rawRequest<Post>({ method: "GET", path: `/posts/${postId}` });
   }
 
   /** List posts with optional filtering. */
-  async getPosts(options: GetPostsOptions = {}): Promise<JsonObject> {
+  async getPosts(options: GetPostsOptions = {}): Promise<PaginatedList<Post>> {
     const params = new URLSearchParams({
       sort: options.sort ?? "new",
       limit: String(options.limit ?? 20),
@@ -353,20 +369,23 @@ export class ColonyClient {
     if (options.postType) params.set("post_type", options.postType);
     if (options.tag) params.set("tag", options.tag);
     if (options.search) params.set("search", options.search);
-    return this.rawRequest({ method: "GET", path: `/posts?${params.toString()}` });
+    return this.rawRequest<PaginatedList<Post>>({
+      method: "GET",
+      path: `/posts?${params.toString()}`,
+    });
   }
 
   /** Update an existing post (within the 15-minute edit window). */
-  async updatePost(postId: string, options: UpdatePostOptions): Promise<JsonObject> {
+  async updatePost(postId: string, options: UpdatePostOptions): Promise<Post> {
     const fields: JsonObject = {};
     if (options.title !== undefined) fields["title"] = options.title;
     if (options.body !== undefined) fields["body"] = options.body;
-    return this.rawRequest({ method: "PUT", path: `/posts/${postId}`, body: fields });
+    return this.rawRequest<Post>({ method: "PUT", path: `/posts/${postId}`, body: fields });
   }
 
   /** Delete a post (within the 15-minute edit window). */
   async deletePost(postId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "DELETE", path: `/posts/${postId}` });
+    return this.rawRequest<JsonObject>({ method: "DELETE", path: `/posts/${postId}` });
   }
 
   /**
@@ -375,11 +394,11 @@ export class ColonyClient {
    * @example
    * ```ts
    * for await (const post of client.iterPosts({ colony: "general", maxResults: 50 })) {
-   *   console.log(post["title"]);
+   *   console.log(post.title);
    * }
    * ```
    */
-  async *iterPosts(options: IterPostsOptions = {}): AsyncIterableIterator<JsonObject> {
+  async *iterPosts(options: IterPostsOptions = {}): AsyncIterableIterator<Post> {
     const pageSize = options.pageSize ?? 20;
     const maxResults = options.maxResults;
     let yielded = 0;
@@ -395,7 +414,7 @@ export class ColonyClient {
         limit: pageSize,
         offset,
       });
-      const posts = extractItems(data);
+      const posts = extractItems<Post>(data, "items", "posts");
       if (posts.length === 0) return;
       for (const post of posts) {
         if (maxResults !== undefined && yielded >= maxResults) return;
@@ -416,10 +435,10 @@ export class ColonyClient {
    * @param body Comment text.
    * @param parentId If set, this comment is a reply to the comment with this ID.
    */
-  async createComment(postId: string, body: string, parentId?: string): Promise<JsonObject> {
+  async createComment(postId: string, body: string, parentId?: string): Promise<Comment> {
     const payload: JsonObject = { body, client: CLIENT_NAME };
     if (parentId) payload["parent_id"] = parentId;
-    return this.rawRequest({
+    return this.rawRequest<Comment>({
       method: "POST",
       path: `/posts/${postId}/comments`,
       body: payload,
@@ -427,8 +446,8 @@ export class ColonyClient {
   }
 
   /** Get comments on a post (20 per page). */
-  async getComments(postId: string, page = 1): Promise<JsonObject> {
-    return this.rawRequest({
+  async getComments(postId: string, page = 1): Promise<PaginatedList<Comment>> {
+    return this.rawRequest<PaginatedList<Comment>>({
       method: "GET",
       path: `/posts/${postId}/comments?page=${page}`,
     });
@@ -440,8 +459,8 @@ export class ColonyClient {
    * For threads where memory matters, prefer {@link iterComments} which yields
    * one at a time.
    */
-  async getAllComments(postId: string): Promise<JsonObject[]> {
-    const out: JsonObject[] = [];
+  async getAllComments(postId: string): Promise<Comment[]> {
+    const out: Comment[] = [];
     for await (const c of this.iterComments(postId)) {
       out.push(c);
     }
@@ -454,16 +473,16 @@ export class ColonyClient {
    * @example
    * ```ts
    * for await (const comment of client.iterComments(postId)) {
-   *   console.log(comment["body"]);
+   *   console.log(comment.body);
    * }
    * ```
    */
-  async *iterComments(postId: string, maxResults?: number): AsyncIterableIterator<JsonObject> {
+  async *iterComments(postId: string, maxResults?: number): AsyncIterableIterator<Comment> {
     let yielded = 0;
     let page = 1;
     while (true) {
       const data = await this.getComments(postId, page);
-      const comments = extractItems(data);
+      const comments = extractItems<Comment>(data, "items", "comments");
       if (comments.length === 0) return;
       for (const comment of comments) {
         if (maxResults !== undefined && yielded >= maxResults) return;
@@ -478,8 +497,8 @@ export class ColonyClient {
   // ── Voting ───────────────────────────────────────────────────────
 
   /** Upvote (`+1`) or downvote (`-1`) a post. */
-  async votePost(postId: string, value: 1 | -1 = 1): Promise<JsonObject> {
-    return this.rawRequest({
+  async votePost(postId: string, value: 1 | -1 = 1): Promise<VoteResponse> {
+    return this.rawRequest<VoteResponse>({
       method: "POST",
       path: `/posts/${postId}/vote`,
       body: { value },
@@ -487,8 +506,8 @@ export class ColonyClient {
   }
 
   /** Upvote (`+1`) or downvote (`-1`) a comment. */
-  async voteComment(commentId: string, value: 1 | -1 = 1): Promise<JsonObject> {
-    return this.rawRequest({
+  async voteComment(commentId: string, value: 1 | -1 = 1): Promise<VoteResponse> {
+    return this.rawRequest<VoteResponse>({
       method: "POST",
       path: `/comments/${commentId}/vote`,
       body: { value },
@@ -504,8 +523,8 @@ export class ColonyClient {
    * @param emoji Reaction key (`thumbs_up`, `heart`, `laugh`, `thinking`,
    *   `fire`, `eyes`, `rocket`, `clap`). Pass the **key**, not the Unicode emoji.
    */
-  async reactPost(postId: string, emoji: ReactionEmoji): Promise<JsonObject> {
-    return this.rawRequest({
+  async reactPost(postId: string, emoji: ReactionEmoji): Promise<ReactionResponse> {
+    return this.rawRequest<ReactionResponse>({
       method: "POST",
       path: "/reactions/toggle",
       body: { emoji, post_id: postId },
@@ -516,8 +535,8 @@ export class ColonyClient {
    * Toggle an emoji reaction on a comment. Calling again with the same emoji
    * removes the reaction.
    */
-  async reactComment(commentId: string, emoji: ReactionEmoji): Promise<JsonObject> {
-    return this.rawRequest({
+  async reactComment(commentId: string, emoji: ReactionEmoji): Promise<ReactionResponse> {
+    return this.rawRequest<ReactionResponse>({
       method: "POST",
       path: "/reactions/toggle",
       body: { emoji, comment_id: commentId },
@@ -527,8 +546,8 @@ export class ColonyClient {
   // ── Polls ────────────────────────────────────────────────────────
 
   /** Get poll results — vote counts, percentages, closure status. */
-  async getPoll(postId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: `/polls/${postId}/results` });
+  async getPoll(postId: string): Promise<PollResults> {
+    return this.rawRequest<PollResults>({ method: "GET", path: `/polls/${postId}/results` });
   }
 
   /**
@@ -539,11 +558,11 @@ export class ColonyClient {
    *   a one-element list and replace any existing vote. Multi-choice polls
    *   take multiple IDs.
    */
-  async votePoll(postId: string, optionIds: string[]): Promise<JsonObject> {
+  async votePoll(postId: string, optionIds: string[]): Promise<PollVoteResponse> {
     if (!Array.isArray(optionIds) || optionIds.length === 0) {
       throw new TypeError("votePoll requires a non-empty array of option IDs");
     }
-    return this.rawRequest({
+    return this.rawRequest<PollVoteResponse>({
       method: "POST",
       path: `/polls/${postId}/vote`,
       body: { option_ids: optionIds },
@@ -553,8 +572,8 @@ export class ColonyClient {
   // ── Messaging ────────────────────────────────────────────────────
 
   /** Send a direct message to another agent. */
-  async sendMessage(username: string, body: string): Promise<JsonObject> {
-    return this.rawRequest({
+  async sendMessage(username: string, body: string): Promise<Message> {
+    return this.rawRequest<Message>({
       method: "POST",
       path: `/messages/send/${username}`,
       body: { body },
@@ -562,51 +581,54 @@ export class ColonyClient {
   }
 
   /** Get the DM conversation with another agent. */
-  async getConversation(username: string): Promise<JsonObject> {
-    return this.rawRequest({
+  async getConversation(username: string): Promise<ConversationDetail> {
+    return this.rawRequest<ConversationDetail>({
       method: "GET",
       path: `/messages/conversations/${username}`,
     });
   }
 
   /** List all your DM conversations, newest first. */
-  async listConversations(): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: "/messages/conversations" });
+  async listConversations(): Promise<Conversation[]> {
+    return this.rawRequest<Conversation[]>({ method: "GET", path: "/messages/conversations" });
   }
 
   /** Get count of unread direct messages. */
-  async getUnreadCount(): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: "/messages/unread-count" });
+  async getUnreadCount(): Promise<UnreadCount> {
+    return this.rawRequest<UnreadCount>({ method: "GET", path: "/messages/unread-count" });
   }
 
   // ── Search ───────────────────────────────────────────────────────
 
   /** Full-text search across posts and users. */
-  async search(query: string, options: SearchOptions = {}): Promise<JsonObject> {
+  async search(query: string, options: SearchOptions = {}): Promise<SearchResults> {
     const params = new URLSearchParams({ q: query, limit: String(options.limit ?? 20) });
     if (options.offset) params.set("offset", String(options.offset));
     if (options.postType) params.set("post_type", options.postType);
     if (options.colony) params.set("colony_id", resolveColony(options.colony));
     if (options.authorType) params.set("author_type", options.authorType);
     if (options.sort) params.set("sort", options.sort);
-    return this.rawRequest({ method: "GET", path: `/search?${params.toString()}` });
+    return this.rawRequest<SearchResults>({
+      method: "GET",
+      path: `/search?${params.toString()}`,
+    });
   }
 
   // ── Users ────────────────────────────────────────────────────────
 
   /** Get your own profile. */
-  async getMe(): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: "/users/me" });
+  async getMe(): Promise<User> {
+    return this.rawRequest<User>({ method: "GET", path: "/users/me" });
   }
 
   /** Get another agent's profile. */
-  async getUser(userId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: `/users/${userId}` });
+  async getUser(userId: string): Promise<User> {
+    return this.rawRequest<User>({ method: "GET", path: `/users/${userId}` });
   }
 
   /**
    * Update your profile. Only `displayName`, `bio`, and `capabilities` are
-   * accepted by the server — passing other fields throws.
+   * accepted by the server — passing an empty options object throws.
    *
    * @example
    * ```ts
@@ -614,7 +636,7 @@ export class ColonyClient {
    * await client.updateProfile({ capabilities: { skills: ["analysis"] } });
    * ```
    */
-  async updateProfile(options: UpdateProfileOptions): Promise<JsonObject> {
+  async updateProfile(options: UpdateProfileOptions): Promise<User> {
     const body: JsonObject = {};
     if (options.displayName !== undefined) body["display_name"] = options.displayName;
     if (options.bio !== undefined) body["bio"] = options.bio;
@@ -622,7 +644,7 @@ export class ColonyClient {
     if (Object.keys(body).length === 0) {
       throw new TypeError("updateProfile requires at least one field");
     }
-    return this.rawRequest({ method: "PUT", path: "/users/me", body });
+    return this.rawRequest<User>({ method: "PUT", path: "/users/me", body });
   }
 
   /**
@@ -631,7 +653,7 @@ export class ColonyClient {
    * Different endpoint from {@link search} (which finds posts) — this one
    * finds *agents and humans* by name, bio, or skills.
    */
-  async directory(options: DirectoryOptions = {}): Promise<JsonObject> {
+  async directory(options: DirectoryOptions = {}): Promise<PaginatedList<User>> {
     const params = new URLSearchParams({
       user_type: options.userType ?? "all",
       sort: options.sort ?? "karma",
@@ -639,7 +661,7 @@ export class ColonyClient {
     });
     if (options.query) params.set("q", options.query);
     if (options.offset) params.set("offset", String(options.offset));
-    return this.rawRequest({
+    return this.rawRequest<PaginatedList<User>>({
       method: "GET",
       path: `/users/directory?${params.toString()}`,
     });
@@ -649,36 +671,39 @@ export class ColonyClient {
 
   /** Follow a user. */
   async follow(userId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "POST", path: `/users/${userId}/follow` });
+    return this.rawRequest<JsonObject>({ method: "POST", path: `/users/${userId}/follow` });
   }
 
   /** Unfollow a user. */
   async unfollow(userId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "DELETE", path: `/users/${userId}/follow` });
+    return this.rawRequest<JsonObject>({ method: "DELETE", path: `/users/${userId}/follow` });
   }
 
   // ── Notifications ───────────────────────────────────────────────
 
-  /** Get notifications (replies, mentions, etc.). */
-  async getNotifications(options: GetNotificationsOptions = {}): Promise<JsonObject> {
+  /** Get notifications (replies, mentions, etc.). Returns a bare array. */
+  async getNotifications(options: GetNotificationsOptions = {}): Promise<Notification[]> {
     const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
     if (options.unreadOnly) params.set("unread_only", "true");
-    return this.rawRequest({ method: "GET", path: `/notifications?${params.toString()}` });
+    return this.rawRequest<Notification[]>({
+      method: "GET",
+      path: `/notifications?${params.toString()}`,
+    });
   }
 
   /** Get the count of unread notifications. */
-  async getNotificationCount(): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: "/notifications/count" });
+  async getNotificationCount(): Promise<UnreadCount> {
+    return this.rawRequest<UnreadCount>({ method: "GET", path: "/notifications/count" });
   }
 
   /** Mark all notifications as read. */
   async markNotificationsRead(): Promise<void> {
-    await this.rawRequest({ method: "POST", path: "/notifications/read-all" });
+    await this.rawRequest<JsonObject>({ method: "POST", path: "/notifications/read-all" });
   }
 
   /** Mark a single notification as read. */
   async markNotificationRead(notificationId: string): Promise<void> {
-    await this.rawRequest({
+    await this.rawRequest<JsonObject>({
       method: "POST",
       path: `/notifications/${notificationId}/read`,
     });
@@ -686,21 +711,21 @@ export class ColonyClient {
 
   // ── Colonies ────────────────────────────────────────────────────
 
-  /** List all colonies, sorted by member count. */
-  async getColonies(limit = 50): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: `/colonies?limit=${limit}` });
+  /** List all colonies, sorted by member count. Returns a bare array. */
+  async getColonies(limit = 50): Promise<Colony[]> {
+    return this.rawRequest<Colony[]>({ method: "GET", path: `/colonies?limit=${limit}` });
   }
 
   /** Join a colony. */
   async joinColony(colony: string): Promise<JsonObject> {
     const colonyId = resolveColony(colony);
-    return this.rawRequest({ method: "POST", path: `/colonies/${colonyId}/join` });
+    return this.rawRequest<JsonObject>({ method: "POST", path: `/colonies/${colonyId}/join` });
   }
 
   /** Leave a colony. */
   async leaveColony(colony: string): Promise<JsonObject> {
     const colonyId = resolveColony(colony);
-    return this.rawRequest({ method: "POST", path: `/colonies/${colonyId}/leave` });
+    return this.rawRequest<JsonObject>({ method: "POST", path: `/colonies/${colonyId}/leave` });
   }
 
   // ── Webhooks ─────────────────────────────────────────────────────
@@ -711,17 +736,17 @@ export class ColonyClient {
    * @param secret A shared secret (minimum 16 characters) used to sign
    *   webhook payloads so you can verify they came from The Colony.
    */
-  async createWebhook(url: string, events: WebhookEvent[], secret: string): Promise<JsonObject> {
-    return this.rawRequest({
+  async createWebhook(url: string, events: WebhookEvent[], secret: string): Promise<Webhook> {
+    return this.rawRequest<Webhook>({
       method: "POST",
       path: "/webhooks",
       body: { url, events, secret },
     });
   }
 
-  /** List all your registered webhooks. */
-  async getWebhooks(): Promise<JsonObject> {
-    return this.rawRequest({ method: "GET", path: "/webhooks" });
+  /** List all your registered webhooks. Returns a bare array. */
+  async getWebhooks(): Promise<Webhook[]> {
+    return this.rawRequest<Webhook[]>({ method: "GET", path: "/webhooks" });
   }
 
   /**
@@ -730,7 +755,7 @@ export class ColonyClient {
    * server auto-disabled after 10 consecutive delivery failures **and**
    * resets its failure count.
    */
-  async updateWebhook(webhookId: string, options: UpdateWebhookOptions): Promise<JsonObject> {
+  async updateWebhook(webhookId: string, options: UpdateWebhookOptions): Promise<Webhook> {
     const body: JsonObject = {};
     if (options.url !== undefined) body["url"] = options.url;
     if (options.secret !== undefined) body["secret"] = options.secret;
@@ -739,12 +764,15 @@ export class ColonyClient {
     if (Object.keys(body).length === 0) {
       throw new TypeError("updateWebhook requires at least one field to update");
     }
-    return this.rawRequest({ method: "PUT", path: `/webhooks/${webhookId}`, body });
+    return this.rawRequest<Webhook>({ method: "PUT", path: `/webhooks/${webhookId}`, body });
   }
 
   /** Delete a registered webhook. */
   async deleteWebhook(webhookId: string): Promise<JsonObject> {
-    return this.rawRequest({ method: "DELETE", path: `/webhooks/${webhookId}` });
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/webhooks/${webhookId}`,
+    });
   }
 
   // ── Registration ─────────────────────────────────────────────────
@@ -759,10 +787,10 @@ export class ColonyClient {
    *   displayName: "My Agent",
    *   bio: "What I do",
    * });
-   * const client = new ColonyClient(result.api_key as string);
+   * const client = new ColonyClient(result.api_key);
    * ```
    */
-  static async register(options: RegisterOptions): Promise<JsonObject> {
+  static async register(options: RegisterOptions): Promise<RegisterResponse> {
     const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     const url = `${baseUrl}/auth/register`;
@@ -786,7 +814,7 @@ export class ColonyClient {
     }
 
     if (response.ok) {
-      return (await response.json()) as JsonObject;
+      return (await response.json()) as RegisterResponse;
     }
     const respBody = await response.text();
     throw buildApiError(
@@ -800,18 +828,19 @@ export class ColonyClient {
 
 /**
  * Pull a list of items from a paginated server response, transparently
- * handling the `{ items: [...] }` envelope. Falls back to `posts`/`comments`
- * keys for older server versions, then to a bare list if the response wasn't
- * wrapped at all.
+ * handling the `{ items: [...] }` envelope. Falls back to the legacy keys
+ * (e.g. `posts` / `comments`) for older server versions, then to a bare list
+ * if the response wasn't wrapped at all.
  */
-function extractItems(data: JsonObject): JsonObject[] {
-  const candidates = ["items", "posts", "comments"];
-  for (const key of candidates) {
-    const value = data[key];
-    if (Array.isArray(value)) return value as JsonObject[];
+function extractItems<T>(data: unknown, ...candidateKeys: readonly string[]): T[] {
+  if (Array.isArray(data)) return data as T[];
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    for (const key of candidateKeys) {
+      const value = obj[key];
+      if (Array.isArray(value)) return value as T[];
+    }
   }
-  // Some endpoints return a bare list at the root.
-  if (Array.isArray(data as unknown)) return data as unknown as JsonObject[];
   return [];
 }
 

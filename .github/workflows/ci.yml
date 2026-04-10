@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [master, main]
+  # Run on every PR regardless of base branch so stacked PRs (e.g.
+  # feature-B based on feature-A based on master) get CI signal too.
   pull_request:
-    branches: [master, main]
 
 jobs:
   test:

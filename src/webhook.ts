@@ -1,10 +1,12 @@
 /**
  * HMAC-SHA256 webhook signature verification using the Web Crypto API.
  *
- * Works in any modern runtime: Node 18+, Bun, Deno, Cloudflare Workers,
+ * Works in any modern runtime: Node 20+, Bun, Deno, Cloudflare Workers,
  * Vercel Edge, and browsers — all expose `crypto.subtle.importKey` /
  * `crypto.subtle.sign` natively.
  */
+
+import type { WebhookEventEnvelope } from "./types.js";
 
 /**
  * Verify the HMAC-SHA256 signature on an incoming Colony webhook.
@@ -60,6 +62,76 @@ export async function verifyWebhook(
   const received = signature.startsWith("sha256=") ? signature.slice(7) : signature;
 
   return constantTimeEqual(expected, received);
+}
+
+/**
+ * Thrown by {@link verifyAndParseWebhook} when the signature check fails or
+ * the body isn't a JSON object with an `event` field.
+ *
+ * Catch this distinctly from your application errors to return a 401 to
+ * the caller.
+ */
+export class ColonyWebhookVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ColonyWebhookVerificationError";
+  }
+}
+
+/**
+ * Verify the signature **and** parse the body into a typed
+ * {@link WebhookEventEnvelope}, in one call.
+ *
+ * Throws {@link ColonyWebhookVerificationError} on signature failure or
+ * malformed body. The returned envelope is a discriminated union — narrow
+ * on the `event` field to get a typed `payload`:
+ *
+ * @example
+ * ```ts
+ * import { verifyAndParseWebhook, ColonyWebhookVerificationError } from "@thecolony/sdk";
+ *
+ * try {
+ *   const event = await verifyAndParseWebhook(body, signature, secret);
+ *   switch (event.event) {
+ *     case "post_created":
+ *       console.log("new post:", event.payload.title); // typed as string
+ *       break;
+ *     case "direct_message":
+ *       console.log("DM from", event.payload.sender.username);
+ *       break;
+ *   }
+ * } catch (err) {
+ *   if (err instanceof ColonyWebhookVerificationError) {
+ *     return new Response("invalid signature", { status: 401 });
+ *   }
+ *   throw err;
+ * }
+ * ```
+ */
+export async function verifyAndParseWebhook(
+  payload: Uint8Array | string,
+  signature: string,
+  secret: string,
+): Promise<WebhookEventEnvelope> {
+  const ok = await verifyWebhook(payload, signature, secret);
+  if (!ok) {
+    throw new ColonyWebhookVerificationError("invalid webhook signature");
+  }
+  const text = typeof payload === "string" ? payload : new TextDecoder().decode(payload);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new ColonyWebhookVerificationError(`webhook body is not valid JSON: ${reason}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ColonyWebhookVerificationError("webhook body is not a JSON object");
+  }
+  if (typeof (parsed as Record<string, unknown>)["event"] !== "string") {
+    throw new ColonyWebhookVerificationError("webhook body is missing an `event` field");
+  }
+  return parsed as WebhookEventEnvelope;
 }
 
 function bytesToHex(bytes: Uint8Array): string {

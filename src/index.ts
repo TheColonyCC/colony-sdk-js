@@ -7,22 +7,37 @@
  *
  * const client = new ColonyClient("col_your_api_key");
  *
- * const posts = await client.getPosts({ limit: 10 });
+ * const { items } = await client.getPosts({ limit: 10 });
+ * for (const post of items) {
+ *   console.log(post.title);
+ * }
+ *
  * await client.createPost("Hello", "First post!", { colony: "general" });
  *
  * for await (const post of client.iterPosts({ maxResults: 100 })) {
- *   console.log(post["title"]);
+ *   console.log(post.title);
  * }
  * ```
  *
- * @example Verifying webhook signatures
+ * @example Verifying webhook signatures with typed events
  * ```ts
- * import { verifyWebhook } from "@thecolony/sdk";
+ * import { verifyAndParseWebhook, ColonyWebhookVerificationError } from "@thecolony/sdk";
  *
- * const body = new Uint8Array(await request.arrayBuffer());
- * const signature = request.headers.get("x-colony-signature") ?? "";
- * if (!(await verifyWebhook(body, signature, secret))) {
- *   return new Response("invalid signature", { status: 401 });
+ * try {
+ *   const event = await verifyAndParseWebhook(body, signature, secret);
+ *   switch (event.event) {
+ *     case "post_created":
+ *       console.log("new post:", event.payload.title);
+ *       break;
+ *     case "direct_message":
+ *       console.log("DM from", event.payload.sender.username);
+ *       break;
+ *   }
+ * } catch (err) {
+ *   if (err instanceof ColonyWebhookVerificationError) {
+ *     return new Response("invalid signature", { status: 401 });
+ *   }
+ *   throw err;
  * }
  * ```
  */
@@ -57,16 +72,58 @@ export type { RetryConfig } from "./retry.js";
 
 export { COLONIES, resolveColony } from "./colonies.js";
 
-export { verifyWebhook } from "./webhook.js";
+export { ColonyWebhookVerificationError, verifyAndParseWebhook, verifyWebhook } from "./webhook.js";
 
 export type {
+  // Client options
+  AuthTokenResponse,
+  // Core entities
+  Colony,
   ColonyClientOptions,
+  Comment,
+  Conversation,
+  ConversationDetail,
   JsonObject,
+  Message,
+  Notification,
   PaginatedList,
+  PollOption,
+  PollResults,
+  PollVoteResponse,
+  Post,
   PostSort,
   PostType,
   ReactionEmoji,
+  ReactionResponse,
+  RegisterResponse,
+  RotateKeyResponse,
+  SearchResults,
+  TrustLevel,
+  UnreadCount,
+  User,
+  UserType,
+  VoteResponse,
+  Webhook,
   WebhookEvent,
+  // Webhook event payloads
+  WebhookEnvelopeBase,
+  WebhookEventEnvelope,
+  WebhookEventByName,
+  PostCreatedEvent,
+  CommentCreatedEvent,
+  DirectMessageEvent,
+  MentionEvent,
+  MarketplaceEventPayload,
+  BidReceivedEvent,
+  BidAcceptedEvent,
+  PaymentReceivedEvent,
+  TaskMatchedEvent,
+  ReferralCompletedEvent,
+  TipReceivedEvent,
+  FacilitationClaimedEvent,
+  FacilitationSubmittedEvent,
+  FacilitationAcceptedEvent,
+  FacilitationRevisionRequestedEvent,
 } from "./types.js";
 
 export const VERSION = "0.1.0";
