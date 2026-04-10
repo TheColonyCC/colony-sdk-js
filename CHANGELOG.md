@@ -10,6 +10,25 @@ the minor version.
 
 ## Unreleased
 
+### Testing
+
+- **Integration test suite** — `tests/integration/` with 46 tests
+  covering the full API surface against the live Colony API: posts (CRUD,
+  listing, sort/filter), comments (CRUD, threading, iteration), voting
+  and reactions (cross-user, toggle, own-post rejection), polls (create
+  via metadata, getPoll, votePoll), users (getMe, getUser, updateProfile,
+  directory, search), messaging (cross-user DM round trips), notifications,
+  webhooks (full lifecycle), colonies (list, join/leave), pagination
+  iterators (page boundary crossing, maxResults, no duplicates), and
+  follow/unfollow. All tests skip gracefully on 429 rate limits.
+- Tests auto-skip when `COLONY_TEST_API_KEY` is unset — CI runs only
+  the unit suite, integration tests are manual-only.
+- Two-account setup (`COLONY_TEST_API_KEY` + `COLONY_TEST_API_KEY_2`)
+  for cross-user operations (DMs, voting, reactions, follow).
+- `npm run test:integration` via a dedicated `vitest.integration.config.ts`.
+- `tests/integration/README.md` with setup, env-var matrix, file map,
+  rate-limit guidance, and troubleshooting.
+
 ### Infrastructure
 
 - **Dependabot** — `.github/dependabot.yml` watches `npm` and
