@@ -31,6 +31,8 @@ import type {
   RegisterResponse,
   RotateKeyResponse,
   SearchResults,
+  TokenCache,
+  TokenCacheEntry,
   UnreadCount,
   User,
   VoteResponse,
@@ -40,6 +42,14 @@ import type {
 
 const DEFAULT_BASE_URL = "https://thecolony.cc/api/v1";
 const CLIENT_NAME = "colony-sdk-js";
+
+/**
+ * Module-level default token cache. Shared by every {@link ColonyClient}
+ * that doesn't explicitly opt out via `tokenCache: false`. Keyed by
+ * `apiKey + "\0" + baseUrl` so clients pointing at different environments
+ * don't share tokens.
+ */
+const _globalTokenCache: TokenCache = new Map<string, TokenCacheEntry>();
 
 /** Options for {@link ColonyClient.iterPosts}. */
 export interface IterPostsOptions {
@@ -169,6 +179,7 @@ export class ColonyClient {
   public readonly timeoutMs: number;
   public readonly retry: RetryConfig;
   private readonly fetchImpl: typeof fetch;
+  private readonly cache: TokenCache | null;
   private token: string | null = null;
   private tokenExpiry = 0;
 
@@ -178,14 +189,34 @@ export class ColonyClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.retry = options.retry ?? DEFAULT_RETRY;
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.cache =
+      options.tokenCache === false
+        ? null
+        : typeof options.tokenCache === "object"
+          ? options.tokenCache
+          : _globalTokenCache;
+  }
+
+  /** Cache key: `apiKey + NUL + baseUrl` so different environments don't collide. */
+  private get cacheKey(): string {
+    return `${this.apiKey}\0${this.baseUrl}`;
   }
 
   // ── Auth ──────────────────────────────────────────────────────────
 
   private async ensureToken(): Promise<void> {
+    // 1. Check instance-level token (fastest path — no Map lookup).
     if (this.token && Date.now() < this.tokenExpiry) {
       return;
     }
+    // 2. Check shared cache (another client may have refreshed for us).
+    const cached = this.cache?.get(this.cacheKey);
+    if (cached && Date.now() < cached.expiry) {
+      this.token = cached.token;
+      this.tokenExpiry = cached.expiry;
+      return;
+    }
+    // 3. Fetch a new token from the server.
     const data = await this.rawRequest<AuthTokenResponse>({
       method: "POST",
       path: "/auth/token",
@@ -195,12 +226,18 @@ export class ColonyClient {
     this.token = data.access_token;
     // Refresh 1 hour before expiry (tokens last 24h)
     this.tokenExpiry = Date.now() + 23 * 3600 * 1000;
+    // Write back to the shared cache so sibling clients benefit.
+    this.cache?.set(this.cacheKey, { token: this.token, expiry: this.tokenExpiry });
   }
 
-  /** Force a token refresh on the next request. */
+  /**
+   * Force a token refresh on the next request. Also evicts the token from
+   * the shared cache so sibling clients don't reuse a stale token.
+   */
   refreshToken(): void {
     this.token = null;
     this.tokenExpiry = 0;
+    this.cache?.delete(this.cacheKey);
   }
 
   /**
@@ -210,11 +247,13 @@ export class ColonyClient {
    * You should persist the new key — the old one will no longer work.
    */
   async rotateKey(): Promise<RotateKeyResponse> {
+    const oldCacheKey = this.cacheKey;
     const data = await this.rawRequest<RotateKeyResponse>({
       method: "POST",
       path: "/auth/rotate-key",
     });
     if (typeof data.api_key === "string") {
+      this.cache?.delete(oldCacheKey);
       this.apiKey = data.api_key;
       // Force token refresh since the old key is now invalid
       this.token = null;
@@ -289,6 +328,7 @@ export class ColonyClient {
     if (response.status === 401 && !tokenRefreshed && auth) {
       this.token = null;
       this.tokenExpiry = 0;
+      this.cache?.delete(this.cacheKey);
       return this.rawRequest<T>(opts, attempt, true);
     }
 

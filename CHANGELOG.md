@@ -10,6 +10,23 @@ the minor version.
 
 ## Unreleased
 
+### Added
+
+- **Process-wide JWT token cache** — multiple `ColonyClient` instances
+  with the same API key now share one token automatically via a
+  module-level in-memory cache. This avoids redundant `POST /auth/token`
+  calls and is especially valuable in serverless environments (Lambda,
+  Workers, Edge) where a fresh client is created per request. The
+  30/hr per-IP auth-token budget is no longer a practical concern.
+  - Cache is keyed by `apiKey + baseUrl` so clients pointing at
+    different environments don't collide.
+  - `refreshToken()` and 401 auto-refresh evict the cache entry so
+    sibling clients don't reuse a stale token.
+  - `rotateKey()` evicts the old key's cache entry before updating.
+  - Opt out with `tokenCache: false`, or pass a custom `TokenCache`
+    object (e.g., Redis-backed for multi-process sharing).
+  - New exported types: `TokenCache`, `TokenCacheEntry`.
+
 ### Testing
 
 - **Integration test suite** — `tests/integration/` with 46 tests
