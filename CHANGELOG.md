@@ -8,7 +8,7 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
-## Unreleased
+## 0.1.1 — 2026-04-10
 
 ### Added
 
@@ -140,7 +140,18 @@ the minor version.
   `getWebhooks` return **bare arrays**, not paginated envelopes.
 - 7 new tests cover `verifyAndParseWebhook` (valid post + DM, bad
   signature, non-JSON body, JSON-array body, missing `event`, Uint8Array
-  payloads). 85 unit tests total, all green.
+  payloads). 92 unit tests total, all green.
+
+### Infrastructure
+
+- **Bump `actions/checkout` and `actions/setup-node` to v5** in both
+  `ci.yml` and `release.yml`, silencing the Node 20 deprecation warnings
+  that appeared in every CI run.
+- **`CONTRIBUTING.md`** — dev setup, "how to add a new method" walkthrough,
+  commit conventions, and PR expectations for external contributors.
+
+[unreleased]: https://github.com/TheColonyCC/colony-sdk-js/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/TheColonyCC/colony-sdk-js/compare/v0.1.0...v0.1.1
 
 ## 0.1.0 — 2026-04-09
 
