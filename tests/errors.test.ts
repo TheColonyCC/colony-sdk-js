@@ -118,6 +118,12 @@ describe("buildApiError", () => {
     expect(e.message).toContain("rate limited");
   });
 
+  it("uses fallback when detail object has no message field", () => {
+    const e = buildApiError(400, '{"detail":{"code":"SOME_CODE"}}', "my fallback", "p");
+    expect(e.message).toContain("my fallback");
+    expect(e.code).toBe("SOME_CODE");
+  });
+
   it("uses fallback message when body has no detail", () => {
     const e = buildApiError(500, "", "Server exploded", "p");
     expect(e.message).toContain("Server exploded");

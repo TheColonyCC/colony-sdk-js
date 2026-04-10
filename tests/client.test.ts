@@ -220,6 +220,90 @@ describe("per-request AbortSignal", () => {
     expect(result.items).toBeDefined();
   });
 
+  it("signal threads through to rawRequest on methods without options", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true }); // deletePost
+    mock.json({ ok: true }); // voteComment
+    mock.json({ ok: true }); // follow
+    mock.json([]); // getWebhooks
+    mock.json({}); // markNotificationsRead
+    mock.json([{ id: "col1" }]); // getColonies
+    mock.json({ ok: true }); // joinColony
+    mock.json({ ok: true }); // leaveColony
+    mock.json({ ok: true }); // unfollow
+    mock.json({ id: "m1", body: "hi" }); // sendMessage
+    mock.json({ id: "conv1", other_user: { username: "x" }, messages: [] }); // getConversation
+    mock.json([]); // listConversations
+    mock.json({ unread_count: 0 }); // getUnreadCount
+    mock.json({ unread_count: 0 }); // getNotificationCount
+    mock.json({}); // markNotificationRead
+    mock.json({ ok: true }); // deleteWebhook
+    mock.json({ options: [] }); // getPoll
+    mock.json({ ok: true }); // votePoll
+    mock.json({ id: "u1", username: "x" }); // getUser
+    mock.json({ id: "c1" }); // createComment
+    mock.json({ items: [], total: 0, page: 1 }); // getComments
+
+    const controller = new AbortController();
+    const sig = controller.signal;
+    const client = makeClient(mock);
+
+    // Exercise every method that takes optional CallOptions with signal
+    await client.deletePost("p1", { signal: sig });
+    await client.voteComment("c1", 1, { signal: sig });
+    await client.follow("u1", { signal: sig });
+    await client.getWebhooks({ signal: sig });
+    await client.markNotificationsRead({ signal: sig });
+    await client.getColonies(5, { signal: sig });
+    await client.joinColony("general", { signal: sig });
+    await client.leaveColony("general", { signal: sig });
+    await client.unfollow("u1", { signal: sig });
+    await client.sendMessage("x", "hi", { signal: sig });
+    await client.getConversation("x", { signal: sig });
+    await client.listConversations({ signal: sig });
+    await client.getUnreadCount({ signal: sig });
+    await client.getNotificationCount({ signal: sig });
+    await client.markNotificationRead("n1", { signal: sig });
+    await client.deleteWebhook("wh1", { signal: sig });
+    await client.getPoll("p1", { signal: sig });
+    await client.votePoll("p1", ["a"], { signal: sig });
+    await client.getUser("u1", { signal: sig });
+    await client.createComment("p1", "text", undefined, { signal: sig });
+    await client.getComments("p1", 1, { signal: sig });
+
+    // All calls should have completed without error
+    expect(mock.calls.length).toBeGreaterThan(20);
+  });
+
+  it("signal threads through methods with existing options", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0, users: [] }); // search
+    mock.json({ items: [], total: 0 }); // directory
+    mock.json([]); // getNotifications
+    mock.json({ id: "me" }); // updateProfile
+    mock.json({ id: "p1" }); // updatePost
+    mock.json({ id: "wh1" }); // updateWebhook
+    mock.json({ id: "wh2", url: "x", events: [], is_active: true }); // createWebhook
+
+    const controller = new AbortController();
+    const sig = controller.signal;
+    const client = makeClient(mock);
+
+    await client.search("test", { signal: sig });
+    await client.directory({ signal: sig });
+    await client.getNotifications({ signal: sig });
+    await client.updateProfile({ bio: "x", signal: sig });
+    await client.updatePost("p1", { title: "x", signal: sig });
+    await client.updateWebhook("wh1", { isActive: true, signal: sig });
+    await client.createWebhook("https://x.com", ["post_created"], "secret1234567890", {
+      signal: sig,
+    });
+
+    expect(mock.calls.length).toBeGreaterThan(7);
+  });
+
   it("signal is accepted on createPost with metadata", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
@@ -438,6 +522,16 @@ describe("iterPosts (async iterator)", () => {
     expect(mock.calls.filter((c) => c.url.includes("/posts?"))).toHaveLength(1);
   });
 
+  it("yields nothing when server returns an object with no matching keys", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ total: 0 }); // no `items` or `posts` key
+    const client = makeClient(mock);
+    const out: unknown[] = [];
+    for await (const p of client.iterPosts()) out.push(p);
+    expect(out).toEqual([]);
+  });
+
   it("falls back to legacy `posts` envelope key", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
@@ -630,6 +724,544 @@ describe("raw escape hatch", () => {
     expect(mock.calls[1]?.method).toBe("PUT");
     expect(mock.calls[1]?.url).toContain("/posts/p1/language?language=es");
     expect(mock.calls[1]?.headers["authorization"]).toBe("Bearer test-token-abc");
+  });
+});
+
+describe("comments", () => {
+  it("createComment sends body and parentId", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "c1", post_id: "p1", body: "hello" });
+    const client = makeClient(mock);
+    await client.createComment("p1", "hello", "parent1");
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.body).toBe("hello");
+    expect(sent.parent_id).toBe("parent1");
+    expect(sent.client).toBe("colony-sdk-js");
+  });
+
+  it("getComments hits the correct URL with page", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [{ id: "c1" }], total: 1, page: 2 });
+    const client = makeClient(mock);
+    await client.getComments("p1", 2);
+    expect(mock.calls[1]?.url).toContain("/posts/p1/comments?page=2");
+  });
+
+  it("getAllComments buffers into an array", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [{ id: "c1" }, { id: "c2" }], total: 2 });
+    const client = makeClient(mock);
+    const all = await client.getAllComments("p1");
+    expect(all).toHaveLength(2);
+  });
+
+  it("iterComments paginates and respects maxResults", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i}` })), total: 50 });
+    mock.json({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${20 + i}` })), total: 50 });
+    const client = makeClient(mock);
+    const out: string[] = [];
+    for await (const c of client.iterComments("p1", 25)) out.push(c["id"] as string);
+    expect(out).toHaveLength(25);
+  });
+});
+
+describe("deletePost", () => {
+  it("sends DELETE to the correct path", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.deletePost("p1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/posts/p1");
+  });
+});
+
+describe("voteComment", () => {
+  it("sends POST with value to /comments/{id}/vote", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.voteComment("c1", -1);
+    expect(mock.calls[1]?.url).toContain("/comments/c1/vote");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ value: -1 });
+  });
+});
+
+describe("getPoll", () => {
+  it("hits /polls/{id}/results", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ options: [{ id: "a", text: "A" }] });
+    const client = makeClient(mock);
+    const result = await client.getPoll("poll1");
+    expect(mock.calls[1]?.url).toContain("/polls/poll1/results");
+    expect(result.options).toHaveLength(1);
+  });
+});
+
+describe("messaging", () => {
+  it("sendMessage posts to /messages/send/{username}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "m1", body: "hi" });
+    const client = makeClient(mock);
+    const msg = await client.sendMessage("alice", "hi");
+    expect(mock.calls[1]?.url).toContain("/messages/send/alice");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}").body).toBe("hi");
+    expect(msg.body).toBe("hi");
+  });
+
+  it("getConversation hits the correct path", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "conv1", other_user: { username: "bob" }, messages: [] });
+    const client = makeClient(mock);
+    const detail = await client.getConversation("bob");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/bob");
+    expect(detail.other_user.username).toBe("bob");
+  });
+
+  it("listConversations returns an array", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "conv1" }]);
+    const client = makeClient(mock);
+    const result = await client.listConversations();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("getUnreadCount returns unread_count", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ unread_count: 3 });
+    const client = makeClient(mock);
+    const result = await client.getUnreadCount();
+    expect(result.unread_count).toBe(3);
+  });
+});
+
+describe("search", () => {
+  it("builds query string with all filters", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0, users: [] });
+    const client = makeClient(mock);
+    await client.search("colony", {
+      limit: 10,
+      offset: 5,
+      postType: "finding",
+      colony: "general",
+      authorType: "agent",
+      sort: "newest",
+    });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("q=colony");
+    expect(url).toContain("limit=10");
+    expect(url).toContain("offset=5");
+    expect(url).toContain("post_type=finding");
+    expect(url).toContain("author_type=agent");
+    expect(url).toContain("sort=newest");
+  });
+});
+
+describe("getUser", () => {
+  it("fetches /users/{id}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1", username: "alice" });
+    const client = makeClient(mock);
+    const user = await client.getUser("u1");
+    expect(mock.calls[1]?.url).toContain("/users/u1");
+    expect(user.username).toBe("alice");
+  });
+});
+
+describe("directory", () => {
+  it("builds query string correctly", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    await client.directory({
+      query: "test",
+      userType: "agent",
+      sort: "newest",
+      limit: 10,
+      offset: 5,
+    });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("q=test");
+    expect(url).toContain("user_type=agent");
+    expect(url).toContain("sort=newest");
+    expect(url).toContain("limit=10");
+    expect(url).toContain("offset=5");
+  });
+});
+
+describe("following", () => {
+  it("follow posts to /users/{id}/follow", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.follow("u1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/users/u1/follow");
+  });
+
+  it("unfollow sends DELETE to /users/{id}/follow", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.unfollow("u1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/users/u1/follow");
+  });
+});
+
+describe("notifications", () => {
+  it("getNotifications builds query with unreadOnly", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "n1", is_read: false }]);
+    const client = makeClient(mock);
+    await client.getNotifications({ unreadOnly: true, limit: 10 });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("unread_only=true");
+    expect(url).toContain("limit=10");
+  });
+
+  it("getNotificationCount hits /notifications/count", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ unread_count: 5 });
+    const client = makeClient(mock);
+    const result = await client.getNotificationCount();
+    expect(result.unread_count).toBe(5);
+  });
+
+  it("markNotificationsRead posts to /notifications/read-all", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({});
+    const client = makeClient(mock);
+    await client.markNotificationsRead();
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/notifications/read-all");
+  });
+
+  it("markNotificationRead posts to /notifications/{id}/read", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({});
+    const client = makeClient(mock);
+    await client.markNotificationRead("n1");
+    expect(mock.calls[1]?.url).toContain("/notifications/n1/read");
+  });
+});
+
+describe("colonies", () => {
+  it("getColonies hits /colonies with limit", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "col1", name: "general" }]);
+    const client = makeClient(mock);
+    const result = await client.getColonies(10);
+    expect(mock.calls[1]?.url).toContain("/colonies?limit=10");
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("joinColony resolves name to UUID", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.joinColony("general");
+    expect(mock.calls[1]?.url).toContain("/colonies/2e549d01");
+    expect(mock.calls[1]?.method).toBe("POST");
+  });
+
+  it("leaveColony resolves name to UUID", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.leaveColony("general");
+    expect(mock.calls[1]?.url).toContain("/colonies/2e549d01");
+    expect(mock.calls[1]?.method).toBe("POST");
+  });
+});
+
+describe("webhooks", () => {
+  it("createWebhook sends url, events, secret", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "wh1", url: "https://x.com", events: ["post_created"], is_active: true });
+    const client = makeClient(mock);
+    const wh = await client.createWebhook("https://x.com", ["post_created"], "secret1234567890");
+    expect(mock.calls[1]?.method).toBe("POST");
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.url).toBe("https://x.com");
+    expect(sent.events).toEqual(["post_created"]);
+    expect(sent.secret).toBe("secret1234567890");
+    expect(wh.is_active).toBe(true);
+  });
+
+  it("getWebhooks returns an array", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "wh1" }]);
+    const client = makeClient(mock);
+    const result = await client.getWebhooks();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("deleteWebhook sends DELETE", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.deleteWebhook("wh1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/webhooks/wh1");
+  });
+});
+
+describe("register network error", () => {
+  it("throws ColonyNetworkError on fetch failure", async () => {
+    const mock = new MockFetch();
+    mock.respond(() => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      ColonyClient.register({
+        username: "x",
+        displayName: "x",
+        bio: "x",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+});
+
+describe("optional parameter branches", () => {
+  it("getPosts with offset, tag, and search params", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    await client.getPosts({ offset: 10, tag: "ai", search: "colony" });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("offset=10");
+    expect(url).toContain("tag=ai");
+    expect(url).toContain("search=colony");
+  });
+
+  it("createPost without metadata does not include metadata key", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1" });
+    const client = makeClient(mock);
+    await client.createPost("t", "b");
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.metadata).toBeUndefined();
+    expect(sent.colony_id).toBeDefined();
+    expect(sent.post_type).toBe("discussion");
+  });
+
+  it("createComment without parentId omits parent_id", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "c1" });
+    const client = makeClient(mock);
+    await client.createComment("p1", "text");
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.parent_id).toBeUndefined();
+  });
+
+  it("search with no optional filters uses defaults", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0, users: [] });
+    const client = makeClient(mock);
+    await client.search("test");
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("q=test");
+    expect(url).toContain("limit=20");
+    expect(url).not.toContain("offset");
+    expect(url).not.toContain("post_type");
+  });
+
+  it("directory with defaults only sends user_type, sort, limit", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    await client.directory();
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("user_type=all");
+    expect(url).toContain("sort=karma");
+    expect(url).toContain("limit=20");
+    expect(url).not.toContain("q=");
+  });
+
+  it("getNotifications with defaults", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([]);
+    const client = makeClient(mock);
+    await client.getNotifications();
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("limit=50");
+    expect(url).not.toContain("unread_only");
+  });
+
+  it("updatePost with only body field", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1" });
+    const client = makeClient(mock);
+    await client.updatePost("p1", { body: "new body" });
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent).toEqual({ body: "new body" });
+    expect(sent.title).toBeUndefined();
+  });
+
+  it("updateProfile with displayName and capabilities", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "me" });
+    const client = makeClient(mock);
+    await client.updateProfile({
+      displayName: "New Name",
+      capabilities: { skills: ["ts"] },
+    });
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.display_name).toBe("New Name");
+    expect(sent.capabilities).toEqual({ skills: ["ts"] });
+  });
+
+  it("updateWebhook with url, secret, events, and isActive", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "wh1" });
+    const client = makeClient(mock);
+    await client.updateWebhook("wh1", {
+      url: "https://x.com",
+      secret: "new-secret-1234567",
+      events: ["post_created"],
+      isActive: false,
+    });
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent.url).toBe("https://x.com");
+    expect(sent.secret).toBe("new-secret-1234567");
+    expect(sent.events).toEqual(["post_created"]);
+    expect(sent.is_active).toBe(false);
+  });
+
+  it("rotateKey when server returns no api_key field", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "ok" }); // no api_key field
+    const client = makeClient(mock);
+    const result = await client.rotateKey();
+    expect(result.status).toBe("ok");
+  });
+});
+
+describe("rawRequest edge cases", () => {
+  it("returns empty object when response body is unparseable", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response("not json", { status: 200 }));
+    const client = makeClient(mock);
+    const result = await client.getMe();
+    expect(result).toEqual({});
+  });
+
+  it("returns empty object when response body is empty (204-style)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response("", { status: 200 }));
+    const client = makeClient(mock);
+    const result = await client.getMe();
+    expect(result).toEqual({});
+  });
+
+  it("handles non-Error thrown from fetch", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => {
+      throw "string error";
+    });
+    const client = makeClient(mock);
+    await expect(client.getMe()).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+
+  it("rotateKey with signal and cache enabled", async () => {
+    const cache = new Map();
+    const mock = new MockFetch();
+    mock.json({ access_token: "tok" });
+    mock.json({ api_key: "col_new" });
+
+    const client = new ColonyClient("col_old", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+    const controller = new AbortController();
+    await client.rotateKey({ signal: controller.signal });
+    // Old key's cache entry should be evicted
+    expect(cache.size).toBe(0);
+  });
+
+  it("raw() with signal", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    const controller = new AbortController();
+    const result = await client.raw("PUT", "/custom", { x: 1 }, { signal: controller.signal });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("401 auto-refresh evicts the cache entry", async () => {
+    const cache = new Map();
+    const mock = new MockFetch();
+    mock.json({ access_token: "tok1" }); // initial auth
+    mock.respond(() => new Response('{"detail":"expired"}', { status: 401 })); // getMe → 401
+    mock.json({ access_token: "tok2" }); // re-auth
+    mock.json({ id: "u1" }); // retried getMe
+
+    const client = new ColonyClient("col_key", {
+      fetch: mock.fetch,
+      retry: retryConfig({ maxRetries: 0 }),
+      tokenCache: cache,
+    });
+    await client.getMe();
+    // After 401 refresh, the cache should have the new token
+    const entries = Array.from(cache.values());
+    expect(entries[0]?.token).toBe("tok2");
+  });
+});
+
+describe("iterComments edge cases", () => {
+  it("yields nothing when first page is empty", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    const out: unknown[] = [];
+    for await (const c of client.iterComments("p1")) out.push(c);
+    expect(out).toEqual([]);
   });
 });
 
