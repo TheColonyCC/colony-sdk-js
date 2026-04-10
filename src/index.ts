@@ -78,6 +78,7 @@ export type {
   // Client options
   AuthTokenResponse,
   // Client options + token cache
+  CallOptions,
   ColonyClientOptions,
   TokenCache,
   TokenCacheEntry,

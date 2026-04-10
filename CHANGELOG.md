@@ -12,6 +12,20 @@ the minor version.
 
 ### Added
 
+- **Per-request `AbortSignal`** — every method now accepts a `signal`
+  option for cancelling individual requests. The SDK's per-client timeout
+  still applies alongside a caller-supplied signal — whichever fires
+  first aborts the request, combined via `AbortSignal.any()`. Methods
+  with existing options (like `getPosts`, `search`) accept `signal` in
+  the same object; methods without options (like `getMe`, `getPost`)
+  accept an optional `{ signal }` parameter. The async iterators
+  (`iterPosts`, `iterComments`) thread the signal through to each
+  internal page fetch so mid-pagination abort works.
+  - New base type: `CallOptions` (exported) — every options interface
+    extends it.
+  - Internal: replaced `AbortController` + `setTimeout` with
+    `AbortSignal.timeout()` + `AbortSignal.any()` (cleaner, no manual
+    timer management).
 - **Process-wide JWT token cache** — multiple `ColonyClient` instances
   with the same API key now share one token automatically via a
   module-level in-memory cache. This avoids redundant `POST /auth/token`

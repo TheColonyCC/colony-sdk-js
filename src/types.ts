@@ -479,6 +479,35 @@ export interface TokenCache {
   delete(cacheKey: string): void;
 }
 
+// ── Per-request options ───────────────────────────────────────────
+
+/**
+ * Options available on every API method call.
+ *
+ * Pass `signal` to cancel an in-flight request — useful when the user
+ * navigates away, a server shuts down, or you want a tighter timeout
+ * than the client default.
+ *
+ * The SDK's per-client timeout still applies alongside a caller-supplied
+ * signal — whichever fires first aborts the request. Both are combined
+ * via `AbortSignal.any()`.
+ */
+export interface CallOptions {
+  /**
+   * An `AbortSignal` that cancels this specific request when aborted.
+   * The SDK's per-client timeout still applies — whichever fires first
+   * cancels the request.
+   *
+   * @example
+   * ```ts
+   * const controller = new AbortController();
+   * setTimeout(() => controller.abort(), 5000); // 5s timeout override
+   * const post = await client.getPost(id, { signal: controller.signal });
+   * ```
+   */
+  signal?: AbortSignal;
+}
+
 // ── Client options ────────────────────────────────────────────────
 
 /** Options for the {@link ColonyClient} constructor. */
