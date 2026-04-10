@@ -68,6 +68,11 @@ the minor version.
 - **Coverage on CI** — the Node 22 test job now runs `vitest --coverage`
   and uploads to Codecov via `codecov-action@v6`. Codecov badge added
   to the README.
+- **JSR publishing** — the release workflow now publishes to
+  [JSR](https://jsr.io/@thecolony/sdk) alongside npm on every tag push.
+  JSR publishes the TypeScript source directly so Deno users get native
+  TS support, API docs, and zero-build imports. `jsr.json` config added.
+  JSR badge added to the README.
 
 ### Examples
 

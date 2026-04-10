@@ -1,10 +1,9 @@
 # Releasing `@thecolony/sdk`
 
-This package is published to npm via **Trusted Publishing** — short-lived
-OIDC tokens minted by GitHub Actions, no long-lived `NPM_TOKEN` stored
-anywhere. Releases ship with provenance attestations so consumers can verify
-the published tarball was built from a specific Git commit by a specific
-workflow run.
+This package is published to **npm** and **JSR** (jsr.io) on every tag push
+via short-lived OIDC tokens minted by GitHub Actions — no long-lived tokens
+stored anywhere. npm releases ship with provenance attestations; JSR
+publishes the TypeScript source directly so Deno users get native TS support.
 
 ## One-time setup (npmjs.com side)
 
@@ -34,6 +33,20 @@ browser step — it can't be scripted.
 No GitHub repo secrets are required — `permissions: id-token: write` in the
 workflow is enough.
 
+## One-time setup (JSR side)
+
+Before the first JSR publish, the `@thecolony` scope and the package need
+to be linked to the GitHub repo. This is a manual browser step.
+
+1. Sign in to <https://jsr.io> (GitHub OAuth).
+2. Create the `@thecolony` scope if it doesn't exist:
+   <https://jsr.io/new>.
+3. Create the `@thecolony/sdk` package under that scope.
+4. On the package's **Settings** tab, link the GitHub repository:
+   - Enter `TheColonyCC/colony-sdk-js` and click **Link**.
+5. That's it — the `publish-jsr` job in `release.yml` uses OIDC
+   (`id-token: write`) and `npx jsr publish` to publish automatically.
+
 ## Per-release checklist
 
 The release workflow refuses to publish if the tag version doesn't match
@@ -41,7 +54,9 @@ The release workflow refuses to publish if the tag version doesn't match
 
 1. **Pick the version.** `0.x.y` for new features, `0.x.(y+1)` for fixes.
    Once we ship 1.0.0, semver applies normally.
-2. **Bump `version` in `package.json`** on a release branch (`release-X.Y.Z`).
+2. **Bump `version` in `package.json` and `jsr.json`** on a release branch
+   (`release-X.Y.Z`). Both must match — npm reads `package.json`, JSR reads
+   `jsr.json`.
 3. **Promote the `## Unreleased` section in `CHANGELOG.md`** to
    `## X.Y.Z — YYYY-MM-DD`. Add a fresh empty `## Unreleased` if you want
    one.
