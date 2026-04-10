@@ -197,6 +197,45 @@ describe("token cache", () => {
   });
 });
 
+describe("per-request AbortSignal", () => {
+  it("signal is accepted on methods without options (e.g. getMe)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1" });
+
+    const controller = new AbortController();
+    const client = makeClient(mock);
+    const result = await client.getMe({ signal: controller.signal });
+    expect(result).toEqual({ id: "u1" });
+  });
+
+  it("signal is accepted on methods with existing options (e.g. getPosts)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+
+    const controller = new AbortController();
+    const client = makeClient(mock);
+    const result = await client.getPosts({ sort: "new", limit: 5, signal: controller.signal });
+    expect(result.items).toBeDefined();
+  });
+
+  it("signal is accepted on createPost with metadata", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1", title: "t", post_type: "poll" });
+
+    const controller = new AbortController();
+    const client = makeClient(mock);
+    const result = await client.createPost("t", "b", {
+      postType: "poll",
+      metadata: { poll_options: [] },
+      signal: controller.signal,
+    });
+    expect(result.id).toBe("p1");
+  });
+});
+
 describe("error mapping", () => {
   it("404 → ColonyNotFoundError", async () => {
     const mock = new MockFetch();

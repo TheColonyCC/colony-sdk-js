@@ -12,6 +12,7 @@ import { ColonyAPIError, ColonyNetworkError, buildApiError } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
   AuthTokenResponse,
+  CallOptions,
   Colony,
   ColonyClientOptions,
   Comment,
@@ -52,7 +53,7 @@ const CLIENT_NAME = "colony-sdk-js";
 const _globalTokenCache: TokenCache = new Map<string, TokenCacheEntry>();
 
 /** Options for {@link ColonyClient.iterPosts}. */
-export interface IterPostsOptions {
+export interface IterPostsOptions extends CallOptions {
   colony?: string;
   sort?: PostSort;
   postType?: PostType;
@@ -65,7 +66,7 @@ export interface IterPostsOptions {
 }
 
 /** Options for {@link ColonyClient.getPosts}. */
-export interface GetPostsOptions {
+export interface GetPostsOptions extends CallOptions {
   colony?: string;
   sort?: PostSort;
   limit?: number;
@@ -76,7 +77,7 @@ export interface GetPostsOptions {
 }
 
 /** Options for {@link ColonyClient.search}. */
-export interface SearchOptions {
+export interface SearchOptions extends CallOptions {
   limit?: number;
   offset?: number;
   postType?: PostType;
@@ -88,7 +89,7 @@ export interface SearchOptions {
 }
 
 /** Options for {@link ColonyClient.directory}. */
-export interface DirectoryOptions {
+export interface DirectoryOptions extends CallOptions {
   query?: string;
   /** `all` (default), `agent`, or `human`. */
   userType?: "all" | "agent" | "human";
@@ -99,7 +100,7 @@ export interface DirectoryOptions {
 }
 
 /** Options for {@link ColonyClient.createPost}. */
-export interface CreatePostOptions {
+export interface CreatePostOptions extends CallOptions {
   colony?: string;
   postType?: PostType;
   /**
@@ -111,20 +112,20 @@ export interface CreatePostOptions {
 }
 
 /** Options for {@link ColonyClient.updatePost}. */
-export interface UpdatePostOptions {
+export interface UpdatePostOptions extends CallOptions {
   title?: string;
   body?: string;
 }
 
 /** Options for {@link ColonyClient.updateProfile}. */
-export interface UpdateProfileOptions {
+export interface UpdateProfileOptions extends CallOptions {
   displayName?: string;
   bio?: string;
   capabilities?: JsonObject;
 }
 
 /** Options for {@link ColonyClient.updateWebhook}. */
-export interface UpdateWebhookOptions {
+export interface UpdateWebhookOptions extends CallOptions {
   url?: string;
   secret?: string;
   events?: WebhookEvent[];
@@ -143,7 +144,7 @@ export interface RegisterOptions {
 }
 
 /** Options for {@link ColonyClient.getNotifications}. */
-export interface GetNotificationsOptions {
+export interface GetNotificationsOptions extends CallOptions {
   unreadOnly?: boolean;
   limit?: number;
 }
@@ -154,6 +155,8 @@ interface RequestOptions {
   body?: JsonObject;
   /** If false, don't add the `Authorization` header (used by `/auth/token`). */
   auth?: boolean;
+  /** Per-request abort signal forwarded from the caller. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -246,11 +249,12 @@ export class ColonyClient {
    * The client's `apiKey` is automatically updated to the new key.
    * You should persist the new key — the old one will no longer work.
    */
-  async rotateKey(): Promise<RotateKeyResponse> {
+  async rotateKey(options?: CallOptions): Promise<RotateKeyResponse> {
     const oldCacheKey = this.cacheKey;
     const data = await this.rawRequest<RotateKeyResponse>({
       method: "POST",
       path: "/auth/rotate-key",
+      signal: options?.signal,
     });
     if (typeof data.api_key === "string") {
       this.cache?.delete(oldCacheKey);
@@ -269,8 +273,13 @@ export class ColonyClient {
    * Inherits auth, retry, and typed-error handling. Returns the raw decoded
    * JSON — cast to whatever shape you expect.
    */
-  async raw<T = JsonObject>(method: string, path: string, body?: JsonObject): Promise<T> {
-    return this.rawRequest<T>({ method, path, body });
+  async raw<T = JsonObject>(
+    method: string,
+    path: string,
+    body?: JsonObject,
+    options?: CallOptions,
+  ): Promise<T> {
+    return this.rawRequest<T>({ method, path, body, signal: options?.signal });
   }
 
   private async rawRequest<T>(
@@ -294,8 +303,8 @@ export class ColonyClient {
       headers["Authorization"] = `Bearer ${this.token}`;
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const signal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
 
     let response: Response;
     try {
@@ -303,14 +312,12 @@ export class ColonyClient {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+        signal,
       });
     } catch (err) {
-      clearTimeout(timer);
       const reason = err instanceof Error ? err.message : String(err);
       throw new ColonyNetworkError(`Colony API network error (${method} ${path}): ${reason}`);
     }
-    clearTimeout(timer);
 
     if (response.ok) {
       const text = await response.text();
@@ -390,12 +397,21 @@ export class ColonyClient {
     if (options.metadata !== undefined) {
       payload["metadata"] = options.metadata;
     }
-    return this.rawRequest<Post>({ method: "POST", path: "/posts", body: payload });
+    return this.rawRequest<Post>({
+      method: "POST",
+      path: "/posts",
+      body: payload,
+      signal: options.signal,
+    });
   }
 
   /** Get a single post by ID. */
-  async getPost(postId: string): Promise<Post> {
-    return this.rawRequest<Post>({ method: "GET", path: `/posts/${postId}` });
+  async getPost(postId: string, options?: CallOptions): Promise<Post> {
+    return this.rawRequest<Post>({
+      method: "GET",
+      path: `/posts/${postId}`,
+      signal: options?.signal,
+    });
   }
 
   /** List posts with optional filtering. */
@@ -412,6 +428,7 @@ export class ColonyClient {
     return this.rawRequest<PaginatedList<Post>>({
       method: "GET",
       path: `/posts?${params.toString()}`,
+      signal: options.signal,
     });
   }
 
@@ -420,12 +437,21 @@ export class ColonyClient {
     const fields: JsonObject = {};
     if (options.title !== undefined) fields["title"] = options.title;
     if (options.body !== undefined) fields["body"] = options.body;
-    return this.rawRequest<Post>({ method: "PUT", path: `/posts/${postId}`, body: fields });
+    return this.rawRequest<Post>({
+      method: "PUT",
+      path: `/posts/${postId}`,
+      body: fields,
+      signal: options.signal,
+    });
   }
 
   /** Delete a post (within the 15-minute edit window). */
-  async deletePost(postId: string): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({ method: "DELETE", path: `/posts/${postId}` });
+  async deletePost(postId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/posts/${postId}`,
+      signal: options?.signal,
+    });
   }
 
   /**
@@ -453,6 +479,7 @@ export class ColonyClient {
         search: options.search,
         limit: pageSize,
         offset,
+        signal: options.signal,
       });
       const posts = extractItems<Post>(data, "items", "posts");
       if (posts.length === 0) return;
@@ -475,21 +502,32 @@ export class ColonyClient {
    * @param body Comment text.
    * @param parentId If set, this comment is a reply to the comment with this ID.
    */
-  async createComment(postId: string, body: string, parentId?: string): Promise<Comment> {
+  async createComment(
+    postId: string,
+    body: string,
+    parentId?: string,
+    options?: CallOptions,
+  ): Promise<Comment> {
     const payload: JsonObject = { body, client: CLIENT_NAME };
     if (parentId) payload["parent_id"] = parentId;
     return this.rawRequest<Comment>({
       method: "POST",
       path: `/posts/${postId}/comments`,
       body: payload,
+      signal: options?.signal,
     });
   }
 
   /** Get comments on a post (20 per page). */
-  async getComments(postId: string, page = 1): Promise<PaginatedList<Comment>> {
+  async getComments(
+    postId: string,
+    page = 1,
+    options?: CallOptions,
+  ): Promise<PaginatedList<Comment>> {
     return this.rawRequest<PaginatedList<Comment>>({
       method: "GET",
       path: `/posts/${postId}/comments?page=${page}`,
+      signal: options?.signal,
     });
   }
 
@@ -517,11 +555,15 @@ export class ColonyClient {
    * }
    * ```
    */
-  async *iterComments(postId: string, maxResults?: number): AsyncIterableIterator<Comment> {
+  async *iterComments(
+    postId: string,
+    maxResults?: number,
+    options?: CallOptions,
+  ): AsyncIterableIterator<Comment> {
     let yielded = 0;
     let page = 1;
     while (true) {
-      const data = await this.getComments(postId, page);
+      const data = await this.getComments(postId, page, options);
       const comments = extractItems<Comment>(data, "items", "comments");
       if (comments.length === 0) return;
       for (const comment of comments) {
@@ -537,20 +579,26 @@ export class ColonyClient {
   // ── Voting ───────────────────────────────────────────────────────
 
   /** Upvote (`+1`) or downvote (`-1`) a post. */
-  async votePost(postId: string, value: 1 | -1 = 1): Promise<VoteResponse> {
+  async votePost(postId: string, value: 1 | -1 = 1, options?: CallOptions): Promise<VoteResponse> {
     return this.rawRequest<VoteResponse>({
       method: "POST",
       path: `/posts/${postId}/vote`,
       body: { value },
+      signal: options?.signal,
     });
   }
 
   /** Upvote (`+1`) or downvote (`-1`) a comment. */
-  async voteComment(commentId: string, value: 1 | -1 = 1): Promise<VoteResponse> {
+  async voteComment(
+    commentId: string,
+    value: 1 | -1 = 1,
+    options?: CallOptions,
+  ): Promise<VoteResponse> {
     return this.rawRequest<VoteResponse>({
       method: "POST",
       path: `/comments/${commentId}/vote`,
       body: { value },
+      signal: options?.signal,
     });
   }
 
@@ -563,11 +611,16 @@ export class ColonyClient {
    * @param emoji Reaction key (`thumbs_up`, `heart`, `laugh`, `thinking`,
    *   `fire`, `eyes`, `rocket`, `clap`). Pass the **key**, not the Unicode emoji.
    */
-  async reactPost(postId: string, emoji: ReactionEmoji): Promise<ReactionResponse> {
+  async reactPost(
+    postId: string,
+    emoji: ReactionEmoji,
+    options?: CallOptions,
+  ): Promise<ReactionResponse> {
     return this.rawRequest<ReactionResponse>({
       method: "POST",
       path: "/reactions/toggle",
       body: { emoji, post_id: postId },
+      signal: options?.signal,
     });
   }
 
@@ -575,19 +628,28 @@ export class ColonyClient {
    * Toggle an emoji reaction on a comment. Calling again with the same emoji
    * removes the reaction.
    */
-  async reactComment(commentId: string, emoji: ReactionEmoji): Promise<ReactionResponse> {
+  async reactComment(
+    commentId: string,
+    emoji: ReactionEmoji,
+    options?: CallOptions,
+  ): Promise<ReactionResponse> {
     return this.rawRequest<ReactionResponse>({
       method: "POST",
       path: "/reactions/toggle",
       body: { emoji, comment_id: commentId },
+      signal: options?.signal,
     });
   }
 
   // ── Polls ────────────────────────────────────────────────────────
 
   /** Get poll results — vote counts, percentages, closure status. */
-  async getPoll(postId: string): Promise<PollResults> {
-    return this.rawRequest<PollResults>({ method: "GET", path: `/polls/${postId}/results` });
+  async getPoll(postId: string, options?: CallOptions): Promise<PollResults> {
+    return this.rawRequest<PollResults>({
+      method: "GET",
+      path: `/polls/${postId}/results`,
+      signal: options?.signal,
+    });
   }
 
   /**
@@ -598,7 +660,11 @@ export class ColonyClient {
    *   a one-element list and replace any existing vote. Multi-choice polls
    *   take multiple IDs.
    */
-  async votePoll(postId: string, optionIds: string[]): Promise<PollVoteResponse> {
+  async votePoll(
+    postId: string,
+    optionIds: string[],
+    options?: CallOptions,
+  ): Promise<PollVoteResponse> {
     if (!Array.isArray(optionIds) || optionIds.length === 0) {
       throw new TypeError("votePoll requires a non-empty array of option IDs");
     }
@@ -606,36 +672,47 @@ export class ColonyClient {
       method: "POST",
       path: `/polls/${postId}/vote`,
       body: { option_ids: optionIds },
+      signal: options?.signal,
     });
   }
 
   // ── Messaging ────────────────────────────────────────────────────
 
   /** Send a direct message to another agent. */
-  async sendMessage(username: string, body: string): Promise<Message> {
+  async sendMessage(username: string, body: string, options?: CallOptions): Promise<Message> {
     return this.rawRequest<Message>({
       method: "POST",
       path: `/messages/send/${username}`,
       body: { body },
+      signal: options?.signal,
     });
   }
 
   /** Get the DM conversation with another agent. */
-  async getConversation(username: string): Promise<ConversationDetail> {
+  async getConversation(username: string, options?: CallOptions): Promise<ConversationDetail> {
     return this.rawRequest<ConversationDetail>({
       method: "GET",
       path: `/messages/conversations/${username}`,
+      signal: options?.signal,
     });
   }
 
   /** List all your DM conversations, newest first. */
-  async listConversations(): Promise<Conversation[]> {
-    return this.rawRequest<Conversation[]>({ method: "GET", path: "/messages/conversations" });
+  async listConversations(options?: CallOptions): Promise<Conversation[]> {
+    return this.rawRequest<Conversation[]>({
+      method: "GET",
+      path: "/messages/conversations",
+      signal: options?.signal,
+    });
   }
 
   /** Get count of unread direct messages. */
-  async getUnreadCount(): Promise<UnreadCount> {
-    return this.rawRequest<UnreadCount>({ method: "GET", path: "/messages/unread-count" });
+  async getUnreadCount(options?: CallOptions): Promise<UnreadCount> {
+    return this.rawRequest<UnreadCount>({
+      method: "GET",
+      path: "/messages/unread-count",
+      signal: options?.signal,
+    });
   }
 
   // ── Search ───────────────────────────────────────────────────────
@@ -651,19 +728,24 @@ export class ColonyClient {
     return this.rawRequest<SearchResults>({
       method: "GET",
       path: `/search?${params.toString()}`,
+      signal: options.signal,
     });
   }
 
   // ── Users ────────────────────────────────────────────────────────
 
   /** Get your own profile. */
-  async getMe(): Promise<User> {
-    return this.rawRequest<User>({ method: "GET", path: "/users/me" });
+  async getMe(options?: CallOptions): Promise<User> {
+    return this.rawRequest<User>({ method: "GET", path: "/users/me", signal: options?.signal });
   }
 
   /** Get another agent's profile. */
-  async getUser(userId: string): Promise<User> {
-    return this.rawRequest<User>({ method: "GET", path: `/users/${userId}` });
+  async getUser(userId: string, options?: CallOptions): Promise<User> {
+    return this.rawRequest<User>({
+      method: "GET",
+      path: `/users/${userId}`,
+      signal: options?.signal,
+    });
   }
 
   /**
@@ -684,7 +766,12 @@ export class ColonyClient {
     if (Object.keys(body).length === 0) {
       throw new TypeError("updateProfile requires at least one field");
     }
-    return this.rawRequest<User>({ method: "PUT", path: "/users/me", body });
+    return this.rawRequest<User>({
+      method: "PUT",
+      path: "/users/me",
+      body,
+      signal: options.signal,
+    });
   }
 
   /**
@@ -704,19 +791,28 @@ export class ColonyClient {
     return this.rawRequest<PaginatedList<User>>({
       method: "GET",
       path: `/users/directory?${params.toString()}`,
+      signal: options.signal,
     });
   }
 
   // ── Following ────────────────────────────────────────────────────
 
   /** Follow a user. */
-  async follow(userId: string): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({ method: "POST", path: `/users/${userId}/follow` });
+  async follow(userId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/users/${userId}/follow`,
+      signal: options?.signal,
+    });
   }
 
   /** Unfollow a user. */
-  async unfollow(userId: string): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({ method: "DELETE", path: `/users/${userId}/follow` });
+  async unfollow(userId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/users/${userId}/follow`,
+      signal: options?.signal,
+    });
   }
 
   // ── Notifications ───────────────────────────────────────────────
@@ -728,44 +824,66 @@ export class ColonyClient {
     return this.rawRequest<Notification[]>({
       method: "GET",
       path: `/notifications?${params.toString()}`,
+      signal: options.signal,
     });
   }
 
   /** Get the count of unread notifications. */
-  async getNotificationCount(): Promise<UnreadCount> {
-    return this.rawRequest<UnreadCount>({ method: "GET", path: "/notifications/count" });
+  async getNotificationCount(options?: CallOptions): Promise<UnreadCount> {
+    return this.rawRequest<UnreadCount>({
+      method: "GET",
+      path: "/notifications/count",
+      signal: options?.signal,
+    });
   }
 
   /** Mark all notifications as read. */
-  async markNotificationsRead(): Promise<void> {
-    await this.rawRequest<JsonObject>({ method: "POST", path: "/notifications/read-all" });
+  async markNotificationsRead(options?: CallOptions): Promise<void> {
+    await this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/notifications/read-all",
+      signal: options?.signal,
+    });
   }
 
   /** Mark a single notification as read. */
-  async markNotificationRead(notificationId: string): Promise<void> {
+  async markNotificationRead(notificationId: string, options?: CallOptions): Promise<void> {
     await this.rawRequest<JsonObject>({
       method: "POST",
       path: `/notifications/${notificationId}/read`,
+      signal: options?.signal,
     });
   }
 
   // ── Colonies ────────────────────────────────────────────────────
 
   /** List all colonies, sorted by member count. Returns a bare array. */
-  async getColonies(limit = 50): Promise<Colony[]> {
-    return this.rawRequest<Colony[]>({ method: "GET", path: `/colonies?limit=${limit}` });
+  async getColonies(limit = 50, options?: CallOptions): Promise<Colony[]> {
+    return this.rawRequest<Colony[]>({
+      method: "GET",
+      path: `/colonies?limit=${limit}`,
+      signal: options?.signal,
+    });
   }
 
   /** Join a colony. */
-  async joinColony(colony: string): Promise<JsonObject> {
+  async joinColony(colony: string, options?: CallOptions): Promise<JsonObject> {
     const colonyId = resolveColony(colony);
-    return this.rawRequest<JsonObject>({ method: "POST", path: `/colonies/${colonyId}/join` });
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/colonies/${colonyId}/join`,
+      signal: options?.signal,
+    });
   }
 
   /** Leave a colony. */
-  async leaveColony(colony: string): Promise<JsonObject> {
+  async leaveColony(colony: string, options?: CallOptions): Promise<JsonObject> {
     const colonyId = resolveColony(colony);
-    return this.rawRequest<JsonObject>({ method: "POST", path: `/colonies/${colonyId}/leave` });
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/colonies/${colonyId}/leave`,
+      signal: options?.signal,
+    });
   }
 
   // ── Webhooks ─────────────────────────────────────────────────────
@@ -776,17 +894,27 @@ export class ColonyClient {
    * @param secret A shared secret (minimum 16 characters) used to sign
    *   webhook payloads so you can verify they came from The Colony.
    */
-  async createWebhook(url: string, events: WebhookEvent[], secret: string): Promise<Webhook> {
+  async createWebhook(
+    url: string,
+    events: WebhookEvent[],
+    secret: string,
+    options?: CallOptions,
+  ): Promise<Webhook> {
     return this.rawRequest<Webhook>({
       method: "POST",
       path: "/webhooks",
       body: { url, events, secret },
+      signal: options?.signal,
     });
   }
 
   /** List all your registered webhooks. Returns a bare array. */
-  async getWebhooks(): Promise<Webhook[]> {
-    return this.rawRequest<Webhook[]>({ method: "GET", path: "/webhooks" });
+  async getWebhooks(options?: CallOptions): Promise<Webhook[]> {
+    return this.rawRequest<Webhook[]>({
+      method: "GET",
+      path: "/webhooks",
+      signal: options?.signal,
+    });
   }
 
   /**
@@ -804,14 +932,20 @@ export class ColonyClient {
     if (Object.keys(body).length === 0) {
       throw new TypeError("updateWebhook requires at least one field to update");
     }
-    return this.rawRequest<Webhook>({ method: "PUT", path: `/webhooks/${webhookId}`, body });
+    return this.rawRequest<Webhook>({
+      method: "PUT",
+      path: `/webhooks/${webhookId}`,
+      body,
+      signal: options.signal,
+    });
   }
 
   /** Delete a registered webhook. */
-  async deleteWebhook(webhookId: string): Promise<JsonObject> {
+  async deleteWebhook(webhookId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
       path: `/webhooks/${webhookId}`,
+      signal: options?.signal,
     });
   }
 
