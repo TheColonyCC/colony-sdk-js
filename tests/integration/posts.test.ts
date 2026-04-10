@@ -5,7 +5,7 @@
  * and verifies listing with sort/filter options.
  */
 
-import { afterAll, beforeAll, expect, it, test } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import type { Post } from "../../src/index.js";
 import {
   createTestPost,
@@ -39,8 +39,11 @@ integration("posts", () => {
     }
   });
 
-  it("createPost returns a Post with expected fields", () => {
-    if (!testPost) return test.skip("rate limited on setup");
+  it("createPost returns a Post with expected fields", (ctx) => {
+    if (!testPost) {
+      ctx.skip();
+      return;
+    }
     expect(testPost.id).toBeDefined();
     expect(testPost.title).toContain("Integration test post");
     expect(testPost.post_type).toBe("discussion");
@@ -50,54 +53,94 @@ integration("posts", () => {
     expect(testPost.created_at).toBeDefined();
   });
 
-  it("getPost returns the same post", async () => {
-    if (!testPost) return test.skip("rate limited on setup");
+  it("getPost returns the same post", async (ctx) => {
+    if (!testPost) {
+      ctx.skip();
+      return;
+    }
     const fetched = await client.getPost(testPost.id);
     expect(fetched.id).toBe(testPost.id);
     expect(fetched.title).toBe(testPost.title);
     expect(fetched.body).toBe(testPost.body);
   });
 
-  it("updatePost changes the title", async () => {
-    if (!testPost) return test.skip("rate limited on setup");
+  it("updatePost changes the title", async (ctx) => {
+    if (!testPost) {
+      ctx.skip();
+      return;
+    }
     const newTitle = `Updated ${suffix}`;
     try {
       const updated = await client.updatePost(testPost.id, { title: newTitle });
       expect(updated.title).toBe(newTitle);
     } catch (err) {
-      if (isRateLimited(err)) return test.skip("rate limited");
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
       throw err;
     }
   });
 
-  it("getPosts returns a paginated list", async () => {
-    const result = await client.getPosts({ sort: "new", limit: 5 });
-    expect(result.items).toBeDefined();
-    expect(Array.isArray(result.items)).toBe(true);
-    expect(typeof result.total).toBe("number");
-    if (result.items.length > 0) {
-      expect(result.items[0]!.id).toBeDefined();
-      expect(result.items[0]!.title).toBeDefined();
+  it("getPosts returns a paginated list", async (ctx) => {
+    try {
+      const result = await client.getPosts({ sort: "new", limit: 5 });
+      expect(result.items).toBeDefined();
+      expect(Array.isArray(result.items)).toBe(true);
+      expect(typeof result.total).toBe("number");
+      if (result.items.length > 0) {
+        expect(result.items[0]!.id).toBeDefined();
+        expect(result.items[0]!.title).toBeDefined();
+      }
+    } catch (err) {
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
+      throw err;
     }
   });
 
-  it("getPosts with colony filter returns matching posts", async () => {
-    const result = await client.getPosts({ colony: "general", limit: 3 });
-    expect(result.items).toBeDefined();
-  });
-
-  it("getPosts with postType filter works", async () => {
-    const result = await client.getPosts({ postType: "discussion", limit: 3 });
-    expect(result.items).toBeDefined();
-    for (const post of result.items) {
-      expect(post.post_type).toBe("discussion");
+  it("getPosts with colony filter returns matching posts", async (ctx) => {
+    try {
+      const result = await client.getPosts({ colony: "general", limit: 3 });
+      expect(result.items).toBeDefined();
+    } catch (err) {
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
+      throw err;
     }
   });
 
-  it("getPost on nonexistent ID throws ColonyNotFoundError", async () => {
+  it("getPosts with postType filter works", async (ctx) => {
+    try {
+      const result = await client.getPosts({ postType: "discussion", limit: 3 });
+      expect(result.items).toBeDefined();
+      for (const post of result.items) {
+        expect(post.post_type).toBe("discussion");
+      }
+    } catch (err) {
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
+      throw err;
+    }
+  });
+
+  it("getPost on nonexistent ID throws ColonyNotFoundError", async (ctx) => {
     const { ColonyNotFoundError } = await import("../../src/index.js");
-    await expect(client.getPost("00000000-0000-0000-0000-000000000000")).rejects.toBeInstanceOf(
-      ColonyNotFoundError,
-    );
+    try {
+      await client.getPost("00000000-0000-0000-0000-000000000000");
+      expect.fail("expected error");
+    } catch (err) {
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
+      expect(err).toBeInstanceOf(ColonyNotFoundError);
+    }
   });
 });

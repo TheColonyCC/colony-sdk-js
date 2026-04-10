@@ -4,14 +4,14 @@
  * Webhooks are aggressively rate-limited (12 per hour per agent).
  */
 
-import { expect, it, test } from "vitest";
+import { expect, it } from "vitest";
 import { ColonyAPIError } from "../../src/index.js";
 import { integration, isRateLimited, makeClient, uniqueSuffix } from "./setup.js";
 
 integration("webhooks", () => {
   const client = makeClient();
 
-  it("create → list → update → delete lifecycle", async () => {
+  it("create → list → update → delete lifecycle", async (ctx) => {
     const suffix = uniqueSuffix();
     let webhookId: string;
 
@@ -27,7 +27,10 @@ integration("webhooks", () => {
       expect(created.is_active).toBe(true);
       webhookId = created.id;
     } catch (err) {
-      if (isRateLimited(err)) return test.skip("webhook rate limited");
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
       throw err;
     }
 
@@ -56,12 +59,15 @@ integration("webhooks", () => {
     }
   });
 
-  it("deleteWebhook on nonexistent ID throws", async () => {
+  it("deleteWebhook on nonexistent ID throws", async (ctx) => {
     try {
       await client.deleteWebhook("00000000-0000-0000-0000-000000000000");
       expect.fail("expected error");
     } catch (err) {
-      if (isRateLimited(err)) return test.skip("rate limited");
+      if (isRateLimited(err)) {
+        ctx.skip();
+        return;
+      }
       expect(err).toBeInstanceOf(ColonyAPIError);
       expect((err as ColonyAPIError).status).toBeGreaterThanOrEqual(400);
     }

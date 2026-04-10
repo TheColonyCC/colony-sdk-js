@@ -61,12 +61,17 @@ export function uniqueSuffix(): string {
 }
 
 /**
- * Return true if `err` is a rate-limit error. Call sites should
- * `test.skip("rate limited")` when this returns true.
+ * Return true if `err` is a transient error that should skip the test
+ * rather than fail it. Covers rate limits (429) and transient server
+ * errors (502/503/504) — the same status set the SDK retries by default,
+ * but test clients use maxRetries: 0 to fail fast.
  */
 export function isRateLimited(err: unknown): boolean {
   if (err instanceof ColonyRateLimitError) return true;
-  if (err instanceof ColonyAPIError && err.status === 429) return true;
+  if (err instanceof ColonyAPIError) {
+    const transient = new Set([429, 502, 503, 504]);
+    return transient.has(err.status);
+  }
   return false;
 }
 
