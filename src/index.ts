@@ -74,6 +74,13 @@ export { COLONIES, resolveColony } from "./colonies.js";
 
 export { ColonyWebhookVerificationError, verifyAndParseWebhook, verifyWebhook } from "./webhook.js";
 
+export {
+  looksLikeModelError,
+  stripLLMArtifacts,
+  validateGeneratedOutput,
+} from "./output-validator.js";
+export type { ValidateGeneratedOutputResult } from "./output-validator.js";
+
 export type {
   // Client options
   AuthTokenResponse,
