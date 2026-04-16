@@ -8,9 +8,7 @@ import {
 
 describe("looksLikeModelError", () => {
   it("catches the real-incident string", () => {
-    expect(
-      looksLikeModelError("Error generating text. Please try again later."),
-    ).toBe(true);
+    expect(looksLikeModelError("Error generating text. Please try again later.")).toBe(true);
   });
 
   it("catches common provider error variants", () => {
@@ -112,15 +110,11 @@ describe("stripLLMArtifacts", () => {
   });
 
   it("strips meta-preambles", () => {
-    expect(
-      stripLLMArtifacts("Sure, here's the post: actual content here"),
-    ).toBe("actual content here");
-    expect(stripLLMArtifacts("Okay, here is my reply: body text")).toBe(
-      "body text",
+    expect(stripLLMArtifacts("Sure, here's the post: actual content here")).toBe(
+      "actual content here",
     );
-    expect(
-      stripLLMArtifacts("Certainly! Here's a response for you: the body"),
-    ).toBe("the body");
+    expect(stripLLMArtifacts("Okay, here is my reply: body text")).toBe("body text");
+    expect(stripLLMArtifacts("Certainly! Here's a response for you: the body")).toBe("the body");
     expect(stripLLMArtifacts("Of course, here is the reply: x")).toBe("x");
     expect(stripLLMArtifacts("Absolutely, here's a take: y")).toBe("y");
     expect(stripLLMArtifacts("Alright, I'll respond: z")).toBe("z");
@@ -129,17 +123,13 @@ describe("stripLLMArtifacts", () => {
 
   it("strips bare labels", () => {
     expect(stripLLMArtifacts("Reply: my reply body")).toBe("my reply body");
-    expect(stripLLMArtifacts("Output: generated output here")).toBe(
-      "generated output here",
-    );
+    expect(stripLLMArtifacts("Output: generated output here")).toBe("generated output here");
     expect(stripLLMArtifacts("Response: x")).toBe("x");
     expect(stripLLMArtifacts("Answer: y")).toBe("y");
   });
 
   it("doesn't recurse across multiple preamble strips", () => {
-    const out = stripLLMArtifacts(
-      "Sure, here's the post: Reply: actually start here",
-    );
+    const out = stripLLMArtifacts("Sure, here's the post: Reply: actually start here");
     // First strip drops "Sure, here's the post:" — the residual "Reply:"
     // stays intact (audit-friendly over exhaustive).
     expect(out).toBe("Reply: actually start here");
@@ -163,9 +153,7 @@ describe("stripLLMArtifacts", () => {
   });
 
   it("combines multiple artifact types in one pass", () => {
-    expect(
-      stripLLMArtifacts("<s>Assistant: Sure, here's the post: Hello!</s>"),
-    ).toBe("Hello!");
+    expect(stripLLMArtifacts("<s>Assistant: Sure, here's the post: Hello!</s>")).toBe("Hello!");
   });
 });
 
@@ -185,9 +173,10 @@ describe("validateGeneratedOutput", () => {
   });
 
   it("returns model_error for an error string", () => {
-    expect(
-      validateGeneratedOutput("Error generating text. Please try again later."),
-    ).toEqual({ ok: false, reason: "model_error" });
+    expect(validateGeneratedOutput("Error generating text. Please try again later.")).toEqual({
+      ok: false,
+      reason: "model_error",
+    });
   });
 
   it("returns empty when stripping removes everything", () => {
@@ -205,12 +194,14 @@ describe("validateGeneratedOutput", () => {
     // Without the ordering, "Assistant: Error generating text" would pass
     // the error filter because the "Assistant:" prefix prevents the
     // `^error generating text` anchor from matching.
-    expect(
-      validateGeneratedOutput("Assistant: Error generating text."),
-    ).toEqual({ ok: false, reason: "model_error" });
-    expect(
-      validateGeneratedOutput("<s>Gemma: Please try again later</s>"),
-    ).toEqual({ ok: false, reason: "model_error" });
+    expect(validateGeneratedOutput("Assistant: Error generating text.")).toEqual({
+      ok: false,
+      reason: "model_error",
+    });
+    expect(validateGeneratedOutput("<s>Gemma: Please try again later</s>")).toEqual({
+      ok: false,
+      reason: "model_error",
+    });
   });
 
   it("narrows correctly via discriminated union", () => {

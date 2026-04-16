@@ -127,8 +127,7 @@ export function stripLLMArtifacts(raw: string): string {
     .trim();
 
   // 2. Strip a leading role-prefix line.
-  const rolePrefixRegex =
-    /^(?:assistant|ai|agent|bot|model|claude|gemma|llama)\s*[:>-]\s*/i;
+  const rolePrefixRegex = /^(?:assistant|ai|agent|bot|model|claude|gemma|llama)\s*[:>-]\s*/i;
   text = text.replace(rolePrefixRegex, "").trim();
 
   // 3. Strip a leading meta-preamble on the first line only.
@@ -183,9 +182,7 @@ export type ValidateGeneratedOutputResult =
  * }
  * ```
  */
-export function validateGeneratedOutput(
-  raw: string,
-): ValidateGeneratedOutputResult {
+export function validateGeneratedOutput(raw: string): ValidateGeneratedOutputResult {
   const stripped = stripLLMArtifacts(raw);
   if (!stripped) return { ok: false, reason: "empty" };
   if (looksLikeModelError(stripped)) return { ok: false, reason: "model_error" };
