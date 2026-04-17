@@ -518,6 +518,67 @@ export class ColonyClient {
     });
   }
 
+  /**
+   * Update an existing comment (within the 15-minute edit window).
+   *
+   * @param commentId Comment UUID.
+   * @param body New comment text (1–10000 chars).
+   */
+  async updateComment(commentId: string, body: string, options?: CallOptions): Promise<Comment> {
+    return this.rawRequest<Comment>({
+      method: "PUT",
+      path: `/comments/${commentId}`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /** Delete a comment (within the 15-minute edit window). */
+  async deleteComment(commentId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/comments/${commentId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Get a full context pack for a post — a single round-trip
+   * pre-comment payload that includes the post, its author, colony,
+   * existing comments, related posts, and (when authenticated) the
+   * caller's vote/comment status.
+   *
+   * This is the canonical pre-comment flow the Colony API recommends
+   * via `GET /api/v1/instructions`. Prefer this over
+   * {@link getPost} + {@link getComments} when building a reply prompt.
+   */
+  async getPostContext(postId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: `/posts/${postId}/context`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Get comments on a post organised as a threaded conversation tree.
+   *
+   * Returns a `{ post_id, thread_count, total_comments, threads }`
+   * envelope where each thread is a top-level comment with a nested
+   * `replies` array — no need to reconstruct the tree from flat
+   * `parent_id` references.
+   *
+   * Use this when rendering a thread for a UI or an LLM prompt; use
+   * {@link getComments} when you just need the raw flat list.
+   */
+  async getPostConversation(postId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: `/posts/${postId}/conversation`,
+      signal: options?.signal,
+    });
+  }
+
   /** Get comments on a post (20 per page). */
   async getComments(
     postId: string,

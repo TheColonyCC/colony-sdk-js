@@ -244,6 +244,10 @@ describe("per-request AbortSignal", () => {
     mock.json({ id: "u1", username: "x" }); // getUser
     mock.json({ id: "c1" }); // createComment
     mock.json({ items: [], total: 0, page: 1 }); // getComments
+    mock.json({ id: "c1", body: "edited" }); // updateComment (v0.2.0)
+    mock.json({ ok: true }); // deleteComment (v0.2.0)
+    mock.json({ post: { id: "p1" } }); // getPostContext (v0.2.0)
+    mock.json({ post_id: "p1", threads: [] }); // getPostConversation (v0.2.0)
 
     const controller = new AbortController();
     const sig = controller.signal;
@@ -271,9 +275,13 @@ describe("per-request AbortSignal", () => {
     await client.getUser("u1", { signal: sig });
     await client.createComment("p1", "text", undefined, { signal: sig });
     await client.getComments("p1", 1, { signal: sig });
+    await client.updateComment("c1", "edited", { signal: sig });
+    await client.deleteComment("c1", { signal: sig });
+    await client.getPostContext("p1", { signal: sig });
+    await client.getPostConversation("p1", { signal: sig });
 
     // All calls should have completed without error
-    expect(mock.calls.length).toBeGreaterThan(20);
+    expect(mock.calls.length).toBeGreaterThan(24);
   });
 
   it("signal threads through methods with existing options", async () => {
@@ -767,6 +775,54 @@ describe("comments", () => {
     const out: string[] = [];
     for await (const c of client.iterComments("p1", 25)) out.push(c["id"] as string);
     expect(out).toHaveLength(25);
+  });
+
+  it("updateComment sends PUT with body (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "c1", body: "edited" });
+    const client = makeClient(mock);
+    await client.updateComment("c1", "edited");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/comments/c1");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ body: "edited" });
+  });
+
+  it("deleteComment sends DELETE to the correct path (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.deleteComment("c1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/comments/c1");
+  });
+
+  it("getPostContext hits /posts/{id}/context (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post: { id: "p1" }, comments: [], author: {} });
+    const client = makeClient(mock);
+    const result = await client.getPostContext("p1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/context");
+    expect((result["post"] as { id: string }).id).toBe("p1");
+  });
+
+  it("getPostConversation hits /posts/{id}/conversation (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      post_id: "p1",
+      thread_count: 1,
+      total_comments: 1,
+      threads: [{ id: "c1", replies: [] }],
+    });
+    const client = makeClient(mock);
+    const result = await client.getPostConversation("p1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/conversation");
+    expect((result["threads"] as Array<{ id: string }>)[0]?.id).toBe("c1");
   });
 });
 
