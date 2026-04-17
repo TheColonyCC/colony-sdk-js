@@ -244,6 +244,18 @@ describe("per-request AbortSignal", () => {
     mock.json({ id: "u1", username: "x" }); // getUser
     mock.json({ id: "c1" }); // createComment
     mock.json({ items: [], total: 0, page: 1 }); // getComments
+    mock.json({ id: "c1", body: "edited" }); // updateComment (v0.2.0)
+    mock.json({ ok: true }); // deleteComment (v0.2.0)
+    mock.json({ post: { id: "p1" } }); // getPostContext (v0.2.0)
+    mock.json({ post_id: "p1", threads: [] }); // getPostConversation (v0.2.0)
+    mock.json({ items: [] }); // getRisingPosts (v0.2.0)
+    mock.json({ tags: [] }); // getTrendingTags (v0.2.0)
+    mock.json({ username: "alice" }); // getUserReport (v0.2.0)
+    mock.json({ ok: true }); // markConversationRead (v0.2.0)
+    mock.json({ ok: true }); // archiveConversation (v0.2.0)
+    mock.json({ ok: true }); // unarchiveConversation (v0.2.0)
+    mock.json({ ok: true }); // muteConversation (v0.2.0)
+    mock.json({ ok: true }); // unmuteConversation (v0.2.0)
 
     const controller = new AbortController();
     const sig = controller.signal;
@@ -271,9 +283,21 @@ describe("per-request AbortSignal", () => {
     await client.getUser("u1", { signal: sig });
     await client.createComment("p1", "text", undefined, { signal: sig });
     await client.getComments("p1", 1, { signal: sig });
+    await client.updateComment("c1", "edited", { signal: sig });
+    await client.deleteComment("c1", { signal: sig });
+    await client.getPostContext("p1", { signal: sig });
+    await client.getPostConversation("p1", { signal: sig });
+    await client.getRisingPosts({ signal: sig });
+    await client.getTrendingTags({ signal: sig });
+    await client.getUserReport("alice", { signal: sig });
+    await client.markConversationRead("alice", { signal: sig });
+    await client.archiveConversation("alice", { signal: sig });
+    await client.unarchiveConversation("alice", { signal: sig });
+    await client.muteConversation("alice", { signal: sig });
+    await client.unmuteConversation("alice", { signal: sig });
 
     // All calls should have completed without error
-    expect(mock.calls.length).toBeGreaterThan(20);
+    expect(mock.calls.length).toBeGreaterThan(32);
   });
 
   it("signal threads through methods with existing options", async () => {
@@ -768,6 +792,54 @@ describe("comments", () => {
     for await (const c of client.iterComments("p1", 25)) out.push(c["id"] as string);
     expect(out).toHaveLength(25);
   });
+
+  it("updateComment sends PUT with body (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "c1", body: "edited" });
+    const client = makeClient(mock);
+    await client.updateComment("c1", "edited");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/comments/c1");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ body: "edited" });
+  });
+
+  it("deleteComment sends DELETE to the correct path (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.deleteComment("c1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/comments/c1");
+  });
+
+  it("getPostContext hits /posts/{id}/context (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post: { id: "p1" }, comments: [], author: {} });
+    const client = makeClient(mock);
+    const result = await client.getPostContext("p1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/context");
+    expect((result["post"] as { id: string }).id).toBe("p1");
+  });
+
+  it("getPostConversation hits /posts/{id}/conversation (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      post_id: "p1",
+      thread_count: 1,
+      total_comments: 1,
+      threads: [{ id: "c1", replies: [] }],
+    });
+    const client = makeClient(mock);
+    const result = await client.getPostConversation("p1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/conversation");
+    expect((result["threads"] as Array<{ id: string }>)[0]?.id).toBe("c1");
+  });
 });
 
 describe("deletePost", () => {
@@ -844,6 +916,114 @@ describe("messaging", () => {
     const client = makeClient(mock);
     const result = await client.getUnreadCount();
     expect(result.unread_count).toBe(3);
+  });
+
+  it("markConversationRead posts to /conversations/{u}/read (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.markConversationRead("alice");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/read");
+  });
+
+  it("archiveConversation + unarchiveConversation (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.archiveConversation("alice");
+    await client.unarchiveConversation("alice");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/archive");
+    expect(mock.calls[2]?.url).toContain("/messages/conversations/alice/unarchive");
+  });
+
+  it("muteConversation + unmuteConversation (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.muteConversation("alice");
+    await client.unmuteConversation("alice");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/mute");
+    expect(mock.calls[2]?.url).toContain("/messages/conversations/alice/unmute");
+  });
+
+  it("conversation-state methods URL-encode usernames with special chars (v0.2.0)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.markConversationRead("alice+bob");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice%2Bbob/read");
+  });
+});
+
+describe("trending + reports (v0.2.0)", () => {
+  it("getRisingPosts hits /trending/posts/rising with no params by default", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [{ id: "p1" }], total: 1 });
+    const client = makeClient(mock);
+    const result = await client.getRisingPosts();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/trending/posts/rising");
+    expect(mock.calls[1]?.url).not.toContain("?");
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("getRisingPosts forwards limit + offset", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    await client.getRisingPosts({ limit: 5, offset: 10 });
+    expect(mock.calls[1]?.url).toContain("limit=5");
+    expect(mock.calls[1]?.url).toContain("offset=10");
+  });
+
+  it("getTrendingTags hits /trending/tags with no params by default", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ tags: [] });
+    const client = makeClient(mock);
+    await client.getTrendingTags();
+    expect(mock.calls[1]?.url).toContain("/trending/tags");
+    expect(mock.calls[1]?.url).not.toContain("?");
+  });
+
+  it("getTrendingTags forwards window + limit + offset", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ tags: [] });
+    const client = makeClient(mock);
+    await client.getTrendingTags({ window: "day", limit: 20, offset: 0 });
+    expect(mock.calls[1]?.url).toContain("window=day");
+    expect(mock.calls[1]?.url).toContain("limit=20");
+    expect(mock.calls[1]?.url).toContain("offset=0");
+  });
+
+  it("getUserReport hits /agents/{username}/report", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ username: "alice", toll_stats: {}, facilitation: {} });
+    const client = makeClient(mock);
+    const report = await client.getUserReport("alice");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/agents/alice/report");
+    expect(report["username"]).toBe("alice");
+  });
+
+  it("getUserReport URL-encodes usernames with special chars", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({});
+    const client = makeClient(mock);
+    await client.getUserReport("foo bar");
+    expect(mock.calls[1]?.url).toContain("/agents/foo%20bar/report");
   });
 });
 

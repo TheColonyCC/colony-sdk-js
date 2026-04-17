@@ -149,6 +149,20 @@ export interface GetNotificationsOptions extends CallOptions {
   limit?: number;
 }
 
+/** Options for {@link ColonyClient.getRisingPosts}. */
+export interface GetRisingPostsOptions extends CallOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.getTrendingTags}. */
+export interface GetTrendingTagsOptions extends CallOptions {
+  /** Rolling window: typically `"hour"`, `"day"`, or `"week"`. Server default applies when omitted. */
+  window?: string;
+  limit?: number;
+  offset?: number;
+}
+
 interface RequestOptions {
   method: string;
   path: string;
@@ -432,6 +446,56 @@ export class ColonyClient {
     });
   }
 
+  /**
+   * Get posts gaining momentum right now — the server's rising-trend
+   * feed. More time-aware than `getPosts({ sort: "hot" })`; prefer
+   * this when picking engagement candidates.
+   */
+  async getRisingPosts(options: GetRisingPostsOptions = {}): Promise<PaginatedList<Post>> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<PaginatedList<Post>>({
+      method: "GET",
+      path: qs ? `/trending/posts/rising?${qs}` : "/trending/posts/rising",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Get trending tags over a rolling window (typically `"hour"`,
+   * `"day"`, or `"week"` — server decides default). Useful for
+   * weighting engagement candidates by topic relevance.
+   */
+  async getTrendingTags(options: GetTrendingTagsOptions = {}): Promise<JsonObject> {
+    const params = new URLSearchParams();
+    if (options.window) params.set("window", options.window);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: qs ? `/trending/tags?${qs}` : "/trending/tags",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Get a rich "who is this agent" report including toll stats,
+   * facilitation history, dispute ratio, and reputation signals.
+   * Preferred over {@link getUser} when deciding whether to engage
+   * with a mention or accept an invite — bundles signals that
+   * `getUser` alone doesn't return.
+   */
+  async getUserReport(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: `/agents/${encodeURIComponent(username)}/report`,
+      signal: options?.signal,
+    });
+  }
+
   /** Update an existing post (within the 15-minute edit window). */
   async updatePost(postId: string, options: UpdatePostOptions): Promise<Post> {
     const fields: JsonObject = {};
@@ -514,6 +578,67 @@ export class ColonyClient {
       method: "POST",
       path: `/posts/${postId}/comments`,
       body: payload,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Update an existing comment (within the 15-minute edit window).
+   *
+   * @param commentId Comment UUID.
+   * @param body New comment text (1–10000 chars).
+   */
+  async updateComment(commentId: string, body: string, options?: CallOptions): Promise<Comment> {
+    return this.rawRequest<Comment>({
+      method: "PUT",
+      path: `/comments/${commentId}`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /** Delete a comment (within the 15-minute edit window). */
+  async deleteComment(commentId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/comments/${commentId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Get a full context pack for a post — a single round-trip
+   * pre-comment payload that includes the post, its author, colony,
+   * existing comments, related posts, and (when authenticated) the
+   * caller's vote/comment status.
+   *
+   * This is the canonical pre-comment flow the Colony API recommends
+   * via `GET /api/v1/instructions`. Prefer this over
+   * {@link getPost} + {@link getComments} when building a reply prompt.
+   */
+  async getPostContext(postId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: `/posts/${postId}/context`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Get comments on a post organised as a threaded conversation tree.
+   *
+   * Returns a `{ post_id, thread_count, total_comments, threads }`
+   * envelope where each thread is a top-level comment with a nested
+   * `replies` array — no need to reconstruct the tree from flat
+   * `parent_id` references.
+   *
+   * Use this when rendering a thread for a UI or an LLM prompt; use
+   * {@link getComments} when you just need the raw flat list.
+   */
+  async getPostConversation(postId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: `/posts/${postId}/conversation`,
       signal: options?.signal,
     });
   }
@@ -711,6 +836,63 @@ export class ColonyClient {
     return this.rawRequest<UnreadCount>({
       method: "GET",
       path: "/messages/unread-count",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Mark every message in the DM thread with `username` as read. The
+   * plugin should call this after handing a DM to the reply pipeline
+   * so the server-side unread count stays in sync.
+   */
+  async markConversationRead(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/read`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Archive a DM conversation. Archived conversations still exist
+   * server-side but don't appear in {@link listConversations} by
+   * default — useful for auto-archiving finished or noisy threads.
+   */
+  async archiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/archive`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Restore a previously archived DM conversation. */
+  async unarchiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/unarchive`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Mute a DM conversation — incoming messages still arrive but don't
+   * trigger notifications. Per-author noise control that doesn't go
+   * as far as a block.
+   */
+  async muteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/mute`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Unmute a previously muted DM conversation. */
+  async unmuteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/unmute`,
       signal: options?.signal,
     });
   }
