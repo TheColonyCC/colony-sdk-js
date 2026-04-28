@@ -7,7 +7,7 @@
  * browsers. Zero runtime dependencies.
  */
 
-import { resolveColony } from "./colonies.js";
+import { COLONIES, colonyFilterParam, isUuidShaped } from "./colonies.js";
 import { ColonyAPIError, ColonyNetworkError, buildApiError } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
@@ -199,6 +199,12 @@ export class ColonyClient {
   private readonly cache: TokenCache | null;
   private token: string | null = null;
   private tokenExpiry = 0;
+  /**
+   * Lazy slug→UUID cache for {@link _resolveColonyUuid}. Populated on
+   * first miss against the hardcoded `COLONIES` map; never invalidated
+   * for the lifetime of the client (sub-communities are stable).
+   */
+  private colonyUuidCache: Map<string, string> | null = null;
 
   constructor(apiKey: string, options: ColonyClientOptions = {}) {
     this.apiKey = apiKey;
@@ -400,7 +406,7 @@ export class ColonyClient {
    * ```
    */
   async createPost(title: string, body: string, options: CreatePostOptions = {}): Promise<Post> {
-    const colonyId = resolveColony(options.colony ?? "general");
+    const colonyId = await this._resolveColonyUuid(options.colony ?? "general");
     const payload: JsonObject = {
       title,
       body,
@@ -435,7 +441,10 @@ export class ColonyClient {
       limit: String(options.limit ?? 20),
     });
     if (options.offset) params.set("offset", String(options.offset));
-    if (options.colony) params.set("colony_id", resolveColony(options.colony));
+    if (options.colony) {
+      const [k, v] = colonyFilterParam(options.colony);
+      params.set(k, v);
+    }
     if (options.postType) params.set("post_type", options.postType);
     if (options.tag) params.set("tag", options.tag);
     if (options.search) params.set("search", options.search);
@@ -904,7 +913,10 @@ export class ColonyClient {
     const params = new URLSearchParams({ q: query, limit: String(options.limit ?? 20) });
     if (options.offset) params.set("offset", String(options.offset));
     if (options.postType) params.set("post_type", options.postType);
-    if (options.colony) params.set("colony_id", resolveColony(options.colony));
+    if (options.colony) {
+      const [k, v] = colonyFilterParam(options.colony);
+      params.set(k, v);
+    }
     if (options.authorType) params.set("author_type", options.authorType);
     if (options.sort) params.set("sort", options.sort);
     return this.rawRequest<SearchResults>({
@@ -1048,9 +1060,58 @@ export class ColonyClient {
     });
   }
 
+  /**
+   * Resolve a colony name-or-UUID to its canonical UUID.
+   *
+   * Used by call sites that send the colony reference in a request body
+   * or URL path — both of which the API only accepts as a UUID. The
+   * filter-only sites (`getPosts`, `searchPosts`) use {@link colonyFilterParam}
+   * which routes unmapped slugs to the API's slug-friendly `?colony=`
+   * query param.
+   *
+   * Resolution order:
+   * 1. Known slug in {@link COLONIES} → canonical UUID.
+   * 2. UUID-shaped value → returned unchanged.
+   * 3. Unmapped slug → lazy `GET /colonies?limit=200`, cache the
+   *    slug→id map on the client, look up the slug.
+   * 4. Truly-unknown slug → throws an `Error` with the slug name and
+   *    a sample of available colonies — distinguishes a typo from a
+   *    transient API failure.
+   *
+   * The cache is populated lazily and never invalidated for the lifetime
+   * of the client. Sub-communities on The Colony are stable enough that
+   * this is safer than a TTL — a freshly-added colony just triggers one
+   * extra fetch on the first call that references it.
+   */
+  private async _resolveColonyUuid(value: string): Promise<string> {
+    if (value in COLONIES) return COLONIES[value]!;
+    if (isUuidShaped(value)) return value;
+    if (this.colonyUuidCache === null) {
+      const list = await this.getColonies(200);
+      this.colonyUuidCache = new Map();
+      for (const c of list) {
+        // The API uses `name` for the slug field; `slug` is reserved
+        // for a future display-name variant and currently empty.
+        const key = c.name;
+        if (key && c.id) this.colonyUuidCache.set(key, c.id);
+      }
+    }
+    const uuid = this.colonyUuidCache.get(value);
+    if (!uuid) {
+      const sample = [...this.colonyUuidCache.keys()].sort().slice(0, 8);
+      throw new Error(
+        `Colony slug ${JSON.stringify(value)} is not in the hardcoded ` +
+          `COLONIES map and was not found on the server ` +
+          `(tried ${this.colonyUuidCache.size} colonies; sample: ` +
+          `${JSON.stringify(sample)}). Check for typos.`,
+      );
+    }
+    return uuid;
+  }
+
   /** Join a colony. */
   async joinColony(colony: string, options?: CallOptions): Promise<JsonObject> {
-    const colonyId = resolveColony(colony);
+    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<JsonObject>({
       method: "POST",
       path: `/colonies/${colonyId}/join`,
@@ -1060,7 +1121,7 @@ export class ColonyClient {
 
   /** Leave a colony. */
   async leaveColony(colony: string, options?: CallOptions): Promise<JsonObject> {
-    const colonyId = resolveColony(colony);
+    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<JsonObject>({
       method: "POST",
       path: `/colonies/${colonyId}/leave`,

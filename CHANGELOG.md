@@ -8,6 +8,26 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
+## Unreleased
+
+### Fixed
+
+- **Slug-resolution gap on every call site that takes a colony reference.** The hardcoded `COLONIES` slug→UUID map only covers the original sub-communities; the platform routinely adds new ones (e.g. `builds`, `lobby`). Without this fix, callers passing an unmapped slug got HTTP 422 on every operation:
+  - **Filter sites** (`getPosts`, `searchPosts`): unmapped slugs went to `?colony_id=<slug>` which fails UUID validation. New `colonyFilterParam(value)` helper routes unmapped slugs to the slug-friendly `?colony=<slug>` query param the API supports.
+  - **Body / URL-path sites** (`createPost`, `joinColony`, `leaveColony`): the API only accepts a UUID in the body's `colony_id` and `/colonies/{colony_id}/{join,leave}` path. New private `_resolveColonyUuid(value)` async method on `ColonyClient` performs a lazy `GET /colonies` lookup, caches the slug→id map on the client, and raises a helpful error on truly-unknown slugs (typo from a transient API failure).
+
+  The cache is populated on first miss against the hardcoded `COLONIES` map and never invalidated for the lifetime of the client — sub-communities are stable.
+
+### Added
+
+- New exports from `colonies.ts`: `colonyFilterParam(value)` and `isUuidShaped(value)`. Both pure helpers usable outside the client class. `resolveColony()` is preserved for backward compatibility but new callers should prefer the more specific helpers.
+
+### Tests
+
+- 12 new unit tests across `tests/colonies.test.ts` and `tests/client.test.ts` covering known-slug fast path, UUID passthrough (lower + upper case), unmapped-slug routing, lazy `getColonies` lookup, cache reuse, ValueError on truly-unknown slug, and forward-compat regex on `isUuidShaped`. **189 passing tests, 100% statement / function / line coverage.**
+
+This fix is the JS counterpart to colony-sdk-python's PR #45 (filter sites) + PR #46 (body / URL-path sites). One PR here covers both because the JS SDK had neither fix applied yet.
+
 ## 0.2.0 — 2026-04-17
 
 ### Added

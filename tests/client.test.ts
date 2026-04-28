@@ -1460,3 +1460,92 @@ describe("constructor options", () => {
     expect(client.baseUrl).toBe("https://thecolony.cc/api/v1");
   });
 });
+
+describe("_resolveColonyUuid", () => {
+  it("known slug returns UUID without API call", async () => {
+    const mock = new MockFetch();
+    const client = makeClient(mock);
+    // Cast to any for the private method access — same pattern as the
+    // sync test in test_client.py::TestResolveColonyUuid.
+    const id = await (client as any)._resolveColonyUuid("findings");
+    expect(id).toBe("bbe6be09-da95-4983-b23d-1dd980479a7e");
+    // Resolver short-circuits before any HTTP — not even auth fires.
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("UUID-shaped value passes through without API call", async () => {
+    const mock = new MockFetch();
+    const client = makeClient(mock);
+    const u = "bbe6be09-da95-4983-b23d-1dd980479a7e";
+    const id = await (client as any)._resolveColonyUuid(u);
+    expect(id).toBe(u);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("unknown slug resolves via GET /colonies", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([
+      { id: "11111111-2222-3333-4444-555555555555", name: "builds" },
+      { id: "99999999-9999-9999-9999-999999999999", name: "lobby" },
+    ]);
+
+    const client = makeClient(mock);
+    const id = await (client as any)._resolveColonyUuid("builds");
+    expect(id).toBe("11111111-2222-3333-4444-555555555555");
+    // Should have made a GET /colonies call
+    const colonyCall = mock.calls.find((c) => c.url.includes("/colonies?"));
+    expect(colonyCall).toBeDefined();
+  });
+
+  it("cache reused on subsequent calls", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "11111111-2222-3333-4444-555555555555", name: "builds" }]);
+
+    const client = makeClient(mock);
+    await (client as any)._resolveColonyUuid("builds");
+    await (client as any)._resolveColonyUuid("builds");
+    await (client as any)._resolveColonyUuid("builds");
+
+    // /colonies endpoint should have been hit exactly once.
+    const colonyCalls = mock.calls.filter((c) => c.url.includes("/colonies?"));
+    expect(colonyCalls).toHaveLength(1);
+  });
+
+  it("truly-unknown slug throws helpful error", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "11111111-2222-3333-4444-555555555555", name: "builds" }]);
+
+    const client = makeClient(mock);
+    await expect((client as any)._resolveColonyUuid("not-a-real-slug")).rejects.toThrow(
+      /not-a-real-slug.*Check for typos/,
+    );
+  });
+
+  it("skips colony rows missing name or id when populating cache", async () => {
+    // Defensive: if the API ever returns a partial Colony record (missing
+    // `name` or `id`), the resolver shouldn't crash — it should skip
+    // those entries and continue. Exercises the false branch of
+    // `if (key && c.id)`.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([
+      { id: "11111111-2222-3333-4444-555555555555", name: "builds" },
+      { id: "22222222-3333-4444-5555-666666666666", name: "" }, // missing name
+      { id: "", name: "ghost" }, // missing id
+      { id: "33333333-4444-5555-6666-777777777777", name: "lobby" },
+    ]);
+
+    const client = makeClient(mock);
+    expect(await (client as any)._resolveColonyUuid("builds")).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+    expect(await (client as any)._resolveColonyUuid("lobby")).toBe(
+      "33333333-4444-5555-6666-777777777777",
+    );
+    // The malformed rows should not be in the cache.
+    await expect((client as any)._resolveColonyUuid("ghost")).rejects.toThrow();
+  });
+});
