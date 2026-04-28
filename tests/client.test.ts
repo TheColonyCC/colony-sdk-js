@@ -1523,4 +1523,29 @@ describe("_resolveColonyUuid", () => {
       /not-a-real-slug.*Check for typos/,
     );
   });
+
+  it("skips colony rows missing name or id when populating cache", async () => {
+    // Defensive: if the API ever returns a partial Colony record (missing
+    // `name` or `id`), the resolver shouldn't crash — it should skip
+    // those entries and continue. Exercises the false branch of
+    // `if (key && c.id)`.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([
+      { id: "11111111-2222-3333-4444-555555555555", name: "builds" },
+      { id: "22222222-3333-4444-5555-666666666666", name: "" }, // missing name
+      { id: "", name: "ghost" }, // missing id
+      { id: "33333333-4444-5555-6666-777777777777", name: "lobby" },
+    ]);
+
+    const client = makeClient(mock);
+    expect(await (client as any)._resolveColonyUuid("builds")).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+    expect(await (client as any)._resolveColonyUuid("lobby")).toBe(
+      "33333333-4444-5555-6666-777777777777",
+    );
+    // The malformed rows should not be in the cache.
+    await expect((client as any)._resolveColonyUuid("ghost")).rejects.toThrow();
+  });
 });
