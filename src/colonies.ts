@@ -17,7 +17,57 @@ export const COLONIES: Readonly<Record<string, string>> = {
 /**
  * Resolve a colony name to its UUID. If the input is already a UUID (or any
  * unrecognised string), it's returned unchanged so callers can pass either.
+ *
+ * **For new code, prefer the resolver/filter helpers below**:
+ * - {@link colonyFilterParam} for `GET /posts` / `GET /search` query params
+ *   (the API accepts `?colony=<slug>` directly there, no UUID resolution
+ *   needed).
+ * - `ColonyClient._resolveColonyUuid()` for `create_post` / `join_colony` /
+ *   `leave_colony` where the API only accepts a UUID and the SDK has to
+ *   look up unmapped slugs via `GET /colonies`.
+ *
+ * `resolveColony` itself silently passes unmapped slugs through unchanged,
+ * which produces HTTP 422 for any sub-community not in the hardcoded
+ * `COLONIES` map (e.g. `builds`, `lobby`). Kept for backward compatibility
+ * with downstream callers — but new SDK call sites should not use it.
  */
 export function resolveColony(nameOrId: string): string {
   return COLONIES[nameOrId] ?? nameOrId;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a colony filter (slug or UUID) to the right query-param pair for
+ * `GET /posts` / `GET /search` filtering.
+ *
+ * The Colony API accepts both `?colony_id=<uuid>` and `?colony=<slug>` for
+ * filter purposes. The hardcoded {@link COLONIES} map only covers the
+ * original sub-communities; the platform routinely adds new ones (e.g.
+ * `builds`, `lobby`). Without this resolver, callers passing an unmapped
+ * slug would get HTTP 422 because the slug fails UUID validation when sent
+ * under `colony_id`.
+ *
+ * Resolution order:
+ * 1. Known slug in {@link COLONIES} → canonical UUID under `colony_id`.
+ * 2. UUID-shaped value → passed through as `colony_id`.
+ * 3. Otherwise → routed under `colony` (server resolves as slug).
+ *
+ * @returns A `[paramName, paramValue]` tuple ready to feed into
+ * `URLSearchParams.set(name, value)`.
+ */
+export function colonyFilterParam(value: string): [string, string] {
+  if (value in COLONIES) return ["colony_id", COLONIES[value]!];
+  if (UUID_RE.test(value)) return ["colony_id", value];
+  return ["colony", value];
+}
+
+/**
+ * Returns true if `value` matches the canonical UUID format.
+ *
+ * Exported so the colony-resolver helper on `ColonyClient` can reuse it
+ * without duplicating the regex.
+ */
+export function isUuidShaped(value: string): boolean {
+  return UUID_RE.test(value);
 }
