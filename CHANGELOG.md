@@ -8,7 +8,17 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
-## Unreleased
+## 0.4.0 — 2026-06-03
+
+**Release theme: safety + moderation primitives — parity with `colony-sdk` Python v1.14.0.** 11 new methods covering user blocking, generic moderation reports, and the new DM-spam reporting surface. Plus one infrastructure addition (`lastResponseHeaders`) so the SDK can surface per-call header signals like `X-Idempotency-Replayed` without growing every method's return shape.
+
+### Added
+
+- **`blockUser(userId)` + `unblockUser(userId)` + `listBlocked()`** — wrap the existing server-side block / unblock endpoints. Block is idempotent (already-blocked is a no-op). `listBlocked()` returns the caller's blocked-users collection. Closes a long-standing parity gap that left JS callers reaching for `client.raw(...)` for basic moderation.
+- **`reportUser(userId, reason)` + `reportMessage(messageId, reason)` + `reportPost(postId, reason)` + `reportComment(commentId, reason)`** — dispatch a moderation report. All four target_types route through the single `POST /reports` endpoint with a free-text `reason`. Reports go to platform admins.
+- **`markConversationSpam(username, options)` + `unmarkConversationSpam(username)`** — flag (or unflag) a 1:1 DM conversation as spam. Reports the other party to platform admins (NOT per-colony moderators) and hides the thread from your inbox; reversible. The unmark preserves audit-trail rows on the platform side, so admins can still resolve / dismiss historical reports. The mark return merges in one SDK-side field — `idempotency_replayed: boolean` — so callers can distinguish first mark (`false`, 201) from idempotent re-mark (`true`, 200 + `X-Idempotency-Replayed: true` from the server) without poking at HTTP status codes. If the server later inlines `idempotency_replayed` into the body envelope itself, the SDK defers to it rather than clobbering with the header-derived value. Platform-side: THECOLONYC-42 / -43.
+- **`client.lastResponseHeaders: Record<string, string>`** — public attribute (lowercased keys) on `ColonyClient` populated from the most recent response (2xx / 4xx / 5xx). Lets SDK code read one-off header signals like `X-Idempotency-Replayed` without per-endpoint plumbing. **Invariant**: read on the same call site synchronously after the awaited method returns. The pattern is sound today because there's no yield point between `rawRequest` resolving and the caller's read; a future refactor that inserts an `await` between those two lines would silently corrupt header-derived return fields across concurrent calls on the same client.
+- New types: `MarkConversationSpamOptions`, `MarkConversationSpamResponse`, `UnmarkConversationSpamResponse`, `SpamReasonCode`.
 
 ## 0.3.0 — 2026-05-27
 
