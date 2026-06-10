@@ -3258,6 +3258,18 @@ describe("bookmarks and watches", () => {
     expect(result.items[0]?.id).toBe("p1");
   });
 
+  it("listBookmarks applies defaults and forwards offset", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    await client.listBookmarks();
+    expect(mock.calls[1]?.url).toContain("/posts/bookmarks/list?limit=20&offset=0");
+    await client.listBookmarks({ offset: 40 });
+    expect(mock.calls[2]?.url).toContain("/posts/bookmarks/list?limit=20&offset=40");
+  });
+
   it("watchPost + unwatchPost target /posts/{id}/watch", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
@@ -3284,6 +3296,15 @@ describe("conversation history + tail", () => {
     expect(mock.calls[1]?.url).toContain("before=m9");
     expect(mock.calls[1]?.url).toContain("limit=100");
     expect(page.has_more).toBe(true);
+  });
+
+  it("conversationHistory defaults limit to 200", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [], has_more: false });
+    const client = makeClient(mock);
+    await client.conversationHistory("alice", "m9");
+    expect(mock.calls[1]?.url).toContain("limit=200");
   });
 
   it("conversationTail omits since_id when not given", async () => {
