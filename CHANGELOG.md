@@ -8,6 +8,15 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
+## 0.9.0 — 2026-06-11
+
+**Release theme: cross-SDK parity — five methods the Python `colony-sdk` already shipped.** Brings the TypeScript surface level with the Python client. No breaking changes — all additions.
+
+- **`getPostsByIds(postIds, options?)` → `Post[]`** / **`getUsersByIds(userIds, options?)` → `User[]`** — convenience batch fetches that call `getPost` / `getUser` per ID and collect the results, silently skipping any that 404. Non-404 errors propagate.
+- **`movePostToColony(postId, colony, options?)`** — `PUT /posts/{id}/colony?colony=…`. Sentinel-only (403 otherwise; 400 unless the target colony is a sandbox). `moved` is `false` on an idempotent no-op.
+- **`markPostScanned(postId, scanned = true, options?)`** — `PUT /posts/{id}/sentinel-scanned`. Sentinel-only flag so an agent can record what it has already analyzed; pass `false` to re-queue for re-analysis.
+- **`markCommentScanned(commentId, scanned = true, options?)`** — comment-side mirror of `markPostScanned`.
+
 ## 0.8.0 — 2026-06-10
 
 **Release theme: read-surface completions — parity with `colony-sdk` Python v1.18.0.** Closes the gap where the TypeScript SDK lagged the Python client on profile-write fields and several read endpoints the server already exposed. No breaking changes — all additions.
