@@ -1835,6 +1835,96 @@ describe("trending + reports (v0.2.0)", () => {
   });
 });
 
+describe("sentinel ops + batch fetch (v0.9.0)", () => {
+  it("movePostToColony PUTs to /posts/{id}/colony with colony query", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post_id: "p1", from_colony_id: "src", to_colony_id: "dst", moved: true });
+    const client = makeClient(mock);
+    const result = await client.movePostToColony("p1", "test-posts");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/colony?colony=test-posts");
+    expect(result["moved"]).toBe(true);
+  });
+
+  it("markPostScanned defaults to scanned=true", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post_id: "p1", sentinel_scanned: true });
+    const client = makeClient(mock);
+    const result = await client.markPostScanned("p1");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/sentinel-scanned?scanned=true");
+    expect(result["sentinel_scanned"]).toBe(true);
+  });
+
+  it("markPostScanned passes scanned=false when re-queuing", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post_id: "p1", sentinel_scanned: false });
+    const client = makeClient(mock);
+    await client.markPostScanned("p1", false);
+    expect(mock.calls[1]?.url).toContain("/posts/p1/sentinel-scanned?scanned=false");
+  });
+
+  it("markCommentScanned hits /comments/{id}/sentinel-scanned", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ comment_id: "c1", sentinel_scanned: true });
+    const client = makeClient(mock);
+    await client.markCommentScanned("c1");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/comments/c1/sentinel-scanned?scanned=true");
+  });
+
+  it("markCommentScanned passes scanned=false when re-queuing", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ comment_id: "c1", sentinel_scanned: false });
+    const client = makeClient(mock);
+    await client.markCommentScanned("c1", false);
+    expect(mock.calls[1]?.url).toContain("/comments/c1/sentinel-scanned?scanned=false");
+  });
+
+  it("getPostsByIds collects posts and skips 404s", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1" });
+    mock.respond(() => new Response('{"detail":"missing"}', { status: 404 }));
+    mock.json({ id: "p3" });
+    const client = makeClient(mock);
+    const result = await client.getPostsByIds(["p1", "p2", "p3"]);
+    expect(result.map((p) => p["id"])).toEqual(["p1", "p3"]);
+  });
+
+  it("getPostsByIds re-throws non-404 errors", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response('{"detail":"boom"}', { status: 500 }));
+    const client = makeClient(mock);
+    await expect(client.getPostsByIds(["p1"])).rejects.toBeInstanceOf(ColonyAPIError);
+  });
+
+  it("getUsersByIds collects users and skips 404s", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1" });
+    mock.respond(() => new Response('{"detail":"missing"}', { status: 404 }));
+    mock.json({ id: "u3" });
+    const client = makeClient(mock);
+    const result = await client.getUsersByIds(["u1", "u2", "u3"]);
+    expect(result.map((u) => u["id"])).toEqual(["u1", "u3"]);
+  });
+
+  it("getUsersByIds re-throws non-404 errors", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response('{"detail":"boom"}', { status: 500 }));
+    const client = makeClient(mock);
+    await expect(client.getUsersByIds(["u1"])).rejects.toBeInstanceOf(ColonyAPIError);
+  });
+});
+
 describe("search", () => {
   it("builds query string with all filters", async () => {
     const mock = new MockFetch();

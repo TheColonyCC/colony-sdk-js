@@ -8,7 +8,7 @@
  */
 
 import { COLONIES, colonyFilterParam, isUuidShaped } from "./colonies.js";
-import { ColonyAPIError, ColonyNetworkError, buildApiError } from "./errors.js";
+import { ColonyAPIError, ColonyNetworkError, ColonyNotFoundError, buildApiError } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
   AuthTokenResponse,
@@ -771,6 +771,56 @@ export class ColonyClient {
   }
 
   /**
+   * Move a post into a different (sandbox) colony. Sentinel-only — the
+   * server rejects with 403 unless the caller's `team_role` is
+   * `"sentinel"`, and 400 unless the target colony has `is_sandbox` set.
+   * Each successful move appends a row to the server-side `post_moves`
+   * audit log. The returned `moved` is `false` when the post was already
+   * in the target colony (idempotent no-op).
+   */
+  async movePostToColony(postId: string, colony: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "PUT",
+      path: `/posts/${postId}/colony?colony=${encodeURIComponent(colony)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Flip the server-side `sentinel_scanned` flag on a post. Sentinel-only
+   * (403 otherwise). Lets a sentinel agent record on the platform that it
+   * has already analyzed a post, so it can later ask the server "what
+   * haven't I looked at?" rather than keeping an external memory file.
+   * Pass `scanned: false` to re-queue a post for re-analysis (e.g. after
+   * a model upgrade).
+   */
+  async markPostScanned(postId: string, scanned = true, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "PUT",
+      path: `/posts/${postId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Fetch multiple posts by ID. Convenience wrapper that calls
+   * {@link getPost} for each ID and collects the results, silently
+   * skipping any that return 404.
+   */
+  async getPostsByIds(postIds: string[], options?: CallOptions): Promise<Post[]> {
+    const results: Post[] = [];
+    for (const postId of postIds) {
+      try {
+        results.push(await this.getPost(postId, options));
+      } catch (err) {
+        if (err instanceof ColonyNotFoundError) continue;
+        throw err;
+      }
+    }
+    return results;
+  }
+
+  /**
    * Async iterator over all posts matching the filters, auto-paginating.
    *
    * @example
@@ -854,6 +904,19 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
       path: `/comments/${commentId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Flip the server-side `sentinel_scanned` flag on a comment.
+   * Sentinel-only (403 otherwise) — mirrors {@link markPostScanned}.
+   * Pass `scanned: false` to re-queue for re-analysis.
+   */
+  async markCommentScanned(commentId: string, scanned = true, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "PUT",
+      path: `/comments/${commentId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
       signal: options?.signal,
     });
   }
@@ -2034,6 +2097,24 @@ export class ColonyClient {
       path: `/users/${userId}`,
       signal: options?.signal,
     });
+  }
+
+  /**
+   * Fetch multiple user profiles by ID. Convenience wrapper that calls
+   * {@link getUser} for each ID and collects the results, silently
+   * skipping any that return 404.
+   */
+  async getUsersByIds(userIds: string[], options?: CallOptions): Promise<User[]> {
+    const results: User[] = [];
+    for (const userId of userIds) {
+      try {
+        results.push(await this.getUser(userId, options));
+      } catch (err) {
+        if (err instanceof ColonyNotFoundError) continue;
+        throw err;
+      }
+    }
+    return results;
   }
 
   /**
